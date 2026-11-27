@@ -34,6 +34,7 @@ import {
 } from '@tenon-app/kernel/testing'
 import type { IpcMainLike } from '@tenon-app/contracts'
 import { describe, expect, it, vi } from 'vitest'
+import { registerApprovalModeRoutes } from '../src/main/approval-mode-routes.js'
 import { registerInspectorRoutes } from '../src/main/inspector-routes.js'
 import { registerApprovalRoutes } from '../src/main/approval-routes.js'
 import { createDesktopLoop, createRunRegistry, registerChatRoutes } from '../src/main/chat.js'
@@ -978,7 +979,9 @@ function refusedRequests(sessionId: string): Array<[string, unknown]> {
     ['session.selectProfile', { sessionId, profile: 'cowork' }],
     ['workspace.pick', { sessionId }],
     ['workspace.usePrefill', { sessionId }],
+    ['workspace.grant', { sessionId, token: 'a-token', choice: 'session' }],
     ['workspace.remove', { sessionId, folder: '/tmp/x' }],
+    ['session.setApprovalMode', { sessionId, mode: 'auto' }],
     ['inspector.release', { sessionId, callKey: 'opaque-call' }],
     ['snapshot.restore', { sessionId, roundRunId: ROOT, previewKey: 'preview', overwrite: [] }],
     [
@@ -1038,6 +1041,7 @@ describe('once the shutdown began, a route that opens a Run or writes a fact ans
     const routes = refuseWhileShuttingDown(ipc.ipcMain, () => shutdown.started)
     registerChatRoutes({ send: () => {}, ipcMain: routes, sessions, loop, log: () => {} })
     registerInspectorRoutes({ ipcMain: routes, sessions })
+    registerApprovalModeRoutes({ ipcMain: routes, sessions })
     registerApprovalRoutes({ ipcMain: routes, sessions })
     registerSessionRoutes({ ipcMain: routes, sessions })
     registerSnapshotRoutes({ ipcMain: routes, sessions, canAccessSession: () => true })

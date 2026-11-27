@@ -34,20 +34,20 @@
 | 模块 | 管什么 | 不管什么 | 代码在哪 |
 |---|---|---|---|
 | kernel · host | `HostAdapter` 十个成员的接口（identity、fs、secrets、process、sandbox、confirm、clock、network、policy、snapshots）、`keyFor` 存储键、路径工具、测试用的内存宿主 | 任何真实实现 | `packages/kernel/src/host` |
-| kernel · session/loop | 会话服务（建、清空、删、读投影）；每个根会话一个 mailbox，判定发送、停止、继续、答复、恢复；Run 的每一轮、一批工具的执行、上限与守卫、上下文压缩、子 agent、启动恢复；一键还原的轮次、还原请求与 `fs/restore_started`、`fs/restored` 两段事实 | 窗口、IPC、正在跑的 Run 登记（宿主经端口给）；id 和时间由宿主给，自己不取 | `packages/kernel/src/session`、`packages/kernel/src/loop` |
+| kernel · session/loop | 会话服务（建、清空、删、读投影）；每个根会话一个 mailbox，判定发送、停止、继续、答复、恢复；Run 的每一轮、一批工具的执行、上限与守卫、上下文压缩、子 agent、启动恢复；一键还原的轮次、还原请求与 `fs/restore_started`、`fs/restored` 两段事实；任务的审批档（`session/approval_mode_set`：默认、你切的、策略折回、熔断降档）与切档，关机时拒切（`LoopPorts.leases` 的 `isShuttingDown()`）；机器拦截的连续与一轮累计计数 | 窗口、IPC、正在跑的 Run 登记（宿主经端口给）；id 和时间由宿主给，自己不取 | `packages/kernel/src/session`、`packages/kernel/src/loop` |
 | kernel · provider | 厂商定义（Anthropic、智谱、Ollama、自定义厂商）、两条线协议（anthropic-messages、openai-chat）、归一化流事件、错误分类、思考档位 | 密钥在哪、选哪家（宿主的 RunConnector 定）；出网只经 `HostAdapter.network` | `packages/kernel/src/provider` |
 | kernel · tools | 十一个内置工具（Read、Write、Edit、Delete、Glob、Grep、Bash、WebFetch、WebSearch、AskUserQuestion、Agent）、工具表（候选、命名、冻结）、参数校验、执行器、MCP 工具作候选 | 能不能执行（permission 判）；Bash 的 shell 与基础环境（宿主算好给） | `packages/kernel/src/tools` |
-| kernel · permission | 纯函数 `decide()` 的八层决策表、判决记录与摘要、会话授权、Inspector 接口与外带检查、WebFetch 地址黑名单、工作区内外判定 | 卡片投递（经 `HostAdapter.confirm`）；租户策略从哪来（经 `HostAdapter.policy` 只读） | `packages/kernel/src/permission` |
+| kernel · permission | 纯函数 `decide()` 的八层决策表（第 7 层按根会话的审批档：自动档只放宽快照可用时工作区里的文件工具和沙箱里的命令）、判决记录与摘要、会话授权、Inspector 接口与外带检查（含能联网的命令）、inspector 回执的一次性放行、WebFetch 地址黑名单、工作区内外判定 | 卡片投递（经 `HostAdapter.confirm`）；租户策略从哪来（经 `HostAdapter.policy` 只读） | `packages/kernel/src/permission` |
 | kernel · mcp | 连接池与状态机、stdio 与 Streamable HTTP 两种传输、OAuth 登录、令牌经 `HostAdapter.secrets` 存取 | 连接器配置读写与启动确认（main · MCP 管） | `packages/kernel/src/mcp` |
 | kernel · tape | Tape 条目模型、规范 JSON 与哈希链、命名空间与写入授权、`TapeStore` 端口、内存实现、投影与重放 | 落盘与 SQL（main · Tape 存储管）；`apps/*` 不直接调 `TapeStore.append`，只经 kernel 门面 | `packages/kernel/src/tape` |
 | kernel · prompts | 系统提示、语言提示、模型备注等发给模型的固定文本，和它们的版本哈希（哈希另覆盖各内置工具的描述，描述本身在 tools） | 界面文案（走 i18n） | `packages/kernel/src/prompts` |
 | contracts | IPC 全部通道：zod 定义的请求、响应、事件，`registerRoute` / `invokeRoute` 两端校验，通道登记表；桌面与服务端之间的桥帧骨架（纯函数，还没有使用方） | 业务逻辑；不 import electron | `packages/contracts/src` |
-| main · 装配与路由 | 启动、单实例、窗口与导航加固、注册全部 IPC 路由、RunConnector（选 provider 与模型、读密钥、构造 provider）、RunRegistry、发送队列、工作区文件夹、自定义厂商、启动恢复、退出 | 判定与循环（都在 kernel） | `apps/desktop/src/main` 顶层文件与 `custom-vendors/` |
+| main · 装配与路由 | 启动、单实例、窗口与导航加固、注册全部 IPC 路由、RunConnector（选 provider 与模型、读密钥、构造 provider）、RunRegistry、发送队列、工作区文件夹与文件夹授权（token 与 `folderAccess`）、railguard 输入卫生适配器、自定义厂商、启动恢复、退出 | 判定与循环（都在 kernel） | `apps/desktop/src/main` 顶层文件与 `custom-vendors/` |
 | main · 宿主实现 | `HostAdapter` 的桌面实现：文件、钥匙串、进程树、srt 沙箱与姿态自检、出网与不可信抓取、审批投递、命令 shell 的环境、改动前的快照（profile 里的影子 git 仓库与单文件副本）与一键还原 | 判定（只执行 kernel 判过的调用） | `apps/desktop/src/main/host` |
 | main · Tape 存储 | SQLite 版 `TapeStore` 与 DDL，和内存实现跑同一套一致性测试 | 写入规则（来自 kernel） | `apps/desktop/src/main/tape` |
 | main · MCP | 连接器配置读写、server 的启动确认、工具 schema 在 worker 线程里校验、日志、OAuth 回调与打开浏览器、MCP 路由 | 连接与调用（kernel · mcp） | `apps/desktop/src/main/mcp` |
 | preload | 给窗口一个 `window.tenon`：`invoke` / `on` 只放行 contracts 登记的通道，外加启动语言与平台 | 载荷校验（main、renderer 两端做） | `apps/desktop/src/preload` |
-| renderer | React 界面：对话流、工具行与拦截回执、审批卡、结算行与还原清单、输入框与文件夹、设置（模型、连接器、沙箱）；中英两种语言 | Node、electron 与钥匙串（由 lint 禁）；任何特权操作 | `apps/desktop/src/renderer` |
+| renderer | React 界面：对话流、工具行与拦截回执、审批卡、结算行与还原清单、输入框与文件夹、档位菜单与自动档横幅、文件夹授权框、设置（模型、连接器、权限与网络）；中英两种语言 | Node、electron 与钥匙串（由 lint 禁）；任何特权操作 | `apps/desktop/src/renderer` |
 | server（占位） | 只放 Tape 的 Postgres 版表结构，供 `tape:check` 与 SQLite 版逐项对照，从不执行 | 任何运行代码 | `apps/server/sql` |
 
 ## 数据流
@@ -133,8 +133,8 @@
 
 主进程（main 和跑在里面的 kernel）可信、持有全部特权；下面这些都不可信，检查都放在主进程一侧。
 
-- **渲染进程**：按「可能被攻破」设计。每个窗口 `contextIsolation` 开、`nodeIntegration` 关、`sandbox` 开，导航钉在应用自己的页面，网页权限只放剪贴板写；preload 只放行登记的通道，`registerRoute` 两端 zod 校验；渲染端传不进路径，工作区文件夹只能经主进程自己的对话框或它读出的预填加入。
-- **模型输出**（含工具调用的参数）：每次调用都过 kernel 的 `decide()`，deny > 必须问 > 允许；策略和用户可以放宽，Inspector 只能收紧；工作区内外按解过链接的真实路径判；会改动的调用先出审批卡。
+- **渲染进程**：按「可能被攻破」设计。每个窗口 `contextIsolation` 开、`nodeIntegration` 关、`sandbox` 开，导航钉在应用自己的页面，网页权限只放剪贴板写；preload 只放行登记的通道，`registerRoute` 两端 zod 校验；渲染端传不进路径，工作区文件夹只能经主进程自己的对话框或它读出的预填加入；没「以后都允许」过的文件夹还要经授权框，渲染端只带回主进程发的一次性 token，文件夹取主进程记下的那份（06 D42）。
+- **模型输出**（含工具调用的参数）：每次调用都过 kernel 的 `decide()`，deny > 必须问 > 允许；策略和用户可以放宽，Inspector 只能收紧；工作区内外按解过链接的真实路径判；会改动的调用先出审批卡。自动档只在第 7 层放宽两类：快照可用时工作区里的 Write、Edit、有快照的 Delete，和沙箱生效时 macOS 上的命令；撤不回的、工作区外的、联网与连接器、被策略或检查要求问的照旧问，免问的命令拿不到令牌类环境变量（06）。
 - **MCP 工具的描述、注解与结果**：`readOnlyHint`、`destructiveHint` 永不放宽判定，只读 `requiresUserInteraction`（只会更严）；结果当不可信内容；输入 schema 在 worker 线程里校验。
 - **抓回来的网页和搜索结果**：WebFetch 经 `fetchUntrusted` 在主进程查 DNS 结果，拒回环、私网、链路本地与 CGNAT，并钉住查过的地址；会话碰过私有数据又读过不可信内容后，模型自己写出的网址要先问（外带检查）。
 - **沙箱里的命令**：Bash 经 srt 包装（只读、工作区可写两档），网络只放白名单（默认为空），profile 目录、`.ssh` 与凭据位置拒读拒写；沙箱起不来时以你的权限运行、每条都问，卡上写明。
@@ -171,4 +171,5 @@
 
 - 2026-10-23 · 建立 · sdd 接入（ADR-004 A11）· bfde94e
 - 2026-10-29 · 05 实现时同步：模块表（`HostAdapter` 十个成员、Delete、快照与还原、结算行与还原清单）、信任边界「工作区里的文件与链接」、术语「快照」「一键还原」、结构图的 snapshots · 05 §文档同步
+- 2026-11-27 · 06 实现时同步：模块表（审批档与切档、关机闸、第 7 层的自动档、外带检查含命令、inspector 回执放行、文件夹授权、档位界面）、信任边界「渲染进程」「模型输出」 · 06 §文档同步
 - 2026-11-09 · auto-tier-hardening implemented 时同步：沙箱与文件工具另把 git 的转向文件与钩子位置算作受保护位置，外带检查把连接器算作来源与出口；细节见 [auto-tier-hardening](../features/auto-tier-hardening/spec.md)

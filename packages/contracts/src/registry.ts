@@ -52,8 +52,12 @@ import {
   sessionModelChoice,
   sessionSelectModel,
   sessionSelectProfile,
+  sessionSetApprovalMode,
+  workspaceAccess,
+  workspaceGrant,
   workspacePick,
   workspaceRemove,
+  workspaceRevokeAccess,
   workspaceUsePrefill,
 } from './ipc/session.js'
 
@@ -113,8 +117,12 @@ export const ipcRoutes = {
   sessionModelChoice,
   sessionSelectModel,
   sessionSelectProfile,
+  sessionSetApprovalMode,
+  workspaceAccess,
+  workspaceGrant,
   workspacePick,
   workspaceRemove,
+  workspaceRevokeAccess,
   workspaceUsePrefill,
 } as const
 export const ipcEvents = {

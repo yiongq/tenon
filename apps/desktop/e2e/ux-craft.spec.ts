@@ -18,6 +18,7 @@ import {
   readCall,
   send,
   startTask,
+  grantFolder,
   stubFolderDialog,
   textReply,
   writeCall,
@@ -308,6 +309,7 @@ test('presentation-r1 验收 10: at the narrowest window a task with a folder ke
     await page.getByTestId('folder-chip').click()
     await stubFolderDialog(app, [join(tree.real, 'my-project')])
     await page.getByTestId('folder-add').click()
+    await grantFolder(page)
     await expect(page.getByTestId('folder-item')).toHaveCount(1)
     await expect(page.getByTestId('folder-chip')).toHaveText('my-project')
     await page.keyboard.press('Escape')
@@ -354,6 +356,7 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await page.getByTestId('folder-chip').click()
       await stubFolderDialog(app, [join(tree.real, name)])
       await page.getByTestId('folder-add').click()
+      await grantFolder(page)
       const item = page.getByTestId('folder-item')
       const path = join(tree.real, name)
       await expect(item).toHaveCount(1)

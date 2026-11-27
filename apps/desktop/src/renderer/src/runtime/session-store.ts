@@ -11,14 +11,18 @@ import {
   chatSend,
   chatSendNow,
   chatStop,
+  configGet,
+  configSet,
   confirmRequestEvent,
   invokeRoute,
   sessionFacts,
+  sessionSetApprovalMode,
   providerList,
   sessionModelChoice,
   sessionMessages,
 } from '@tenon-app/contracts'
 import type {
+  ApprovalMode,
   ChatEvent,
   MessageRowContract,
   SessionFactsResponse,
@@ -26,6 +30,8 @@ import type {
   SessionModelChoice,
 } from '@tenon-app/contracts'
 import type { TenonBridge } from '../../../preload/index'
+import { downgradeOf } from '../lib/approval-mode'
+import type { Downgrade } from '../lib/approval-mode'
 import { customVendorGone, holdsTools } from '../lib/custom-vendor'
 import { modelBlock } from '../lib/send-block'
 import type { SendBlock } from '../lib/send-block'
@@ -103,6 +109,10 @@ export interface SessionSnapshot {
   readonly canSend: boolean
   /** A task whose model holds text conversations only: sending is disabled, with the reason (A15). */
   readonly textOnlyTask: boolean
+  /** Spec 06 §界面「说明条」: shown once, on the first switch to auto, until 「知道了」. */
+  readonly autoNotice: boolean
+  /** Spec 06 §界面「降档提示」: this window saw the task leave auto on blocks; closable. */
+  readonly downgrade: Downgrade | null
 }
 
 function readCurrent(bridge: TenonBridge, sessionId: string) {
@@ -167,6 +177,8 @@ export class SessionStore {
   readonly #asked = { pending: 0, facts: 0, resumable: 0, model: 0 }
   #modelRefresh: Promise<void> = Promise.resolve()
   #opened = false
+  /** Counts the user's mode choices, so a choice made while a Run closed is never read as a downgrade. */
+  #modeChoices = 0
   /** Final child rows are immutable for this handoff; overlapping reads share a promise. */
   readonly #childReads = new Map<string, Promise<void>>()
   readonly #settledChildren = new Set<string>()
@@ -201,6 +213,8 @@ export class SessionStore {
       runSince: runSinceOf(sessionId),
       canSend,
       textOnlyTask: false,
+      autoNotice: false,
+      downgrade: null,
     }
   }
 
@@ -386,7 +400,10 @@ export class SessionStore {
       // A Run that paused left a card to fetch (§答复与投递); any end may have cleared one.
       void this.refreshPending()
       void this.refreshResumable()
-      if (this.#snapshot.facts?.established === false) void this.refreshFacts()
+      // A Run in auto may have ended on blocks and left the task in manual (06 §熔断).
+      if (this.#snapshot.facts?.approvalMode === 'auto') {
+        void this.#readDowngrade(event.type === 'done' ? event.endReason : undefined)
+      } else if (this.#snapshot.facts?.established === false) void this.refreshFacts()
     }
   }
 
@@ -502,6 +519,53 @@ export class SessionStore {
     const asked = (this.#asked.facts += 1)
     const facts = await invokeRoute(this.#bridge, sessionFacts, { sessionId: this.sessionId })
     if (asked === this.#asked.facts && facts.ok) this.#set({ facts: facts.data })
+  }
+
+  async #readDowngrade(endReason: (ChatEvent & { type: 'done' })['endReason']): Promise<void> {
+    const before = this.#snapshot.facts
+    const choices = this.#modeChoices
+    await this.refreshFacts()
+    const after = this.#snapshot.facts
+    if (after === null || choices !== this.#modeChoices) return
+    const downgrade = downgradeOf({ before, after, endReason })
+    if (downgrade !== null) this.#set({ downgrade, autoNotice: false })
+  }
+
+  /**
+   * Spec 06 §档位怎么存、怎么切: the draft's choice before the first message, a fact after; the
+   * first switch to auto brings the notice until it was once dismissed (`autoModeNoticeSeen`).
+   */
+  async setApprovalMode(mode: ApprovalMode): Promise<boolean> {
+    this.#modeChoices += 1
+    const result = await invokeRoute(this.#bridge, sessionSetApprovalMode, {
+      sessionId: this.sessionId,
+      mode,
+    })
+    await this.refreshFacts()
+    if (!result.ok || !result.data.ok) return false
+    if (mode === 'manual') {
+      this.#set({ autoNotice: false })
+      return true
+    }
+    this.#set({ downgrade: null })
+    const config = await invokeRoute(this.#bridge, configGet, {})
+    if (
+      config.ok &&
+      !config.data.autoModeNoticeSeen &&
+      this.#snapshot.facts?.approvalMode === 'auto'
+    )
+      this.#set({ autoNotice: true })
+    return true
+  }
+
+  /** 「知道了」: the notice never shows again, in any task (`autoModeNoticeSeen`). */
+  async dismissAutoNotice(): Promise<void> {
+    this.#set({ autoNotice: false })
+    await invokeRoute(this.#bridge, configSet, { autoModeNoticeSeen: true })
+  }
+
+  dismissDowngrade(): void {
+    this.#set({ downgrade: null })
   }
 
   async refreshResumable(): Promise<void> {

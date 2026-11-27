@@ -126,6 +126,16 @@ export {
   workspaceUsePrefill,
 } from './ipc/session.js'
 export type { SessionFactsResponse, WorkspaceResult } from './ipc/session.js'
+// Spec 06: the approval mode and folder grants.
+export {
+  approvalModeSchema,
+  pendingGrantSchema,
+  sessionSetApprovalMode,
+  workspaceAccess,
+  workspaceGrant,
+  workspaceRevokeAccess,
+} from './ipc/session.js'
+export type { ApprovalMode, PendingGrant, WorkspaceGrantResult } from './ipc/session.js'
 // Spec 02 plan step 19: the session's own model choice.
 export {
   sessionModelChoice,
@@ -189,6 +199,7 @@ export {
   approvalResume,
   pendingRootSchema,
   decisionSummaryCodeSchema,
+  decisionSummaryReadCodeSchema,
   decisionSummarySchema,
 } from './ipc/approval.js'
 export type { DecisionSummaryContract } from './ipc/approval.js'

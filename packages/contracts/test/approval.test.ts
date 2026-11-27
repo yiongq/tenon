@@ -1,7 +1,8 @@
 /**
  * The decision summary across IPC (spec 02 §判决记录与摘要; plan step 12, 旧 125, 旧 163, 02 不变量
- * 19): the schema and the kernel type are one shape in both directions, strict, with exactly three
- * keys — and no route anywhere carries a decision's steps, its deciding layer or its basis.
+ * 19): every kernel summary crosses, the one extra code the interface reads is `unknown` (spec 06
+ * D32), strict, with exactly three keys — and no route anywhere carries a decision's steps, its
+ * deciding layer or its basis.
  */
 import type {
   AnswerCommand,
@@ -28,12 +29,15 @@ import type { DecisionSummaryContract, pendingRootSchema } from '../src/index.js
 type Assert<T extends true> = T
 type Extends<A, B> = [A] extends [B] ? true : false
 
-// Exported so `noUnusedLocals` keeps them; nothing imports them.
-export type ContractSummaryIsKernelSummary = Assert<
-  Extends<DecisionSummaryContract, DecisionSummary>
->
+// Exported so `noUnusedLocals` keeps them; nothing imports them. One way since spec 06 D32: every
+// kernel summary is accepted, and the read code has the one extra `unknown`.
 export type KernelSummaryIsContractSummary = Assert<
   Extends<DecisionSummary, DecisionSummaryContract>
+>
+export type ReadCodeOnlyAddsUnknown = Assert<
+  Extends<Exclude<DecisionSummaryContract['code'], DecisionSummaryCode>, 'unknown'> extends true
+    ? Extends<'unknown', Exclude<DecisionSummaryContract['code'], DecisionSummaryCode>>
+    : false
 >
 export type CodesMatch = Assert<
   Extends<DecisionSummaryCode, z.infer<typeof decisionSummaryCodeSchema>> extends true
@@ -78,7 +82,37 @@ describe('decisionSummarySchema', () => {
     for (const extra of ['steps', 'decidedBy', 'basis', 'layer']) {
       expect(decisionSummarySchema.safeParse({ ...summary, [extra]: [] }).success).toBe(false)
     }
-    expect(decisionSummarySchema.safeParse({ ...summary, code: 'made-up' }).success).toBe(false)
+    // A code this build does not know reads as `unknown`, the verdict and slots as written (D32); a
+    // value that is not a string still fails.
+    expect(decisionSummarySchema.parse({ ...summary, code: 'made-up' })).toEqual({
+      ...summary,
+      code: 'unknown',
+    })
+    for (const code of [7, null, undefined, { text: 'default-ask' }]) {
+      expect(decisionSummarySchema.safeParse({ ...summary, code }).success).toBe(false)
+    }
+  })
+
+  it('06 规矩 14: a known code parses as itself, an unknown one as unknown with its verdict and facts, and unknown is stable', () => {
+    for (const code of decisionSummaryCodeSchema.options) {
+      expect(
+        decisionSummarySchema.parse({ verdict: 'ask', code, facts: { toolName: 'Write' } }),
+      ).toEqual({ verdict: 'ask', code, facts: { toolName: 'Write' } })
+    }
+    for (const verdict of ['allow', 'ask', 'deny'] as const) {
+      const read = decisionSummarySchema.parse({
+        verdict,
+        code: 'a-code-from-a-later-build',
+        facts: { toolName: 'Bash', host: 'example.com' },
+      })
+      expect(read).toEqual({
+        verdict,
+        code: 'unknown',
+        facts: { toolName: 'Bash', host: 'example.com' },
+      })
+      // What main sends is read again by the renderer: the second read changes nothing.
+      expect(decisionSummarySchema.parse(read)).toEqual(read)
+    }
   })
 
   it('knows all nineteen codes', () => {

@@ -155,6 +155,8 @@ describe('the draft before a session exists (open question 16)', () => {
     expect(await cowork(h)).toEqual({
       ok: true,
       established: false,
+      approvalMode: 'manual',
+      autoModeDisabled: false,
       drafted: true,
       profile: 'cowork',
       workspace: { folders: [DEDICATED], origin: 'dedicated' },
@@ -179,6 +181,8 @@ describe('the draft before a session exists (open question 16)', () => {
     // Where its one Run sent: what the model menu confirms a switch against (§模型选择「数据去向」).
     expect(await h.service.sessionFacts({ sessionId: SESSION })).toEqual({
       established: true,
+      approvalMode: 'manual',
+      autoModeDisabled: false,
       drafted: false,
       profile: 'cowork',
       workspace: { folders: [DEDICATED], origin: 'dedicated' },
@@ -244,6 +248,8 @@ describe('the draft before a session exists (open question 16)', () => {
     const h = await harness()
     expect(await h.service.sessionFacts({ sessionId: SESSION })).toEqual({
       established: false,
+      approvalMode: 'manual',
+      autoModeDisabled: false,
       drafted: false,
       profile: 'chat',
       workspace: null,
@@ -253,6 +259,8 @@ describe('the draft before a session exists (open question 16)', () => {
     await cowork(h)
     expect(await h.service.sessionFacts({ sessionId: SESSION })).toMatchObject({
       established: false,
+      approvalMode: 'manual',
+      autoModeDisabled: false,
       drafted: true,
       profile: 'cowork',
     })
@@ -260,6 +268,8 @@ describe('the draft before a session exists (open question 16)', () => {
     await h.service.createSession({ sessionId: OTHER })
     expect(await h.service.sessionFacts({ sessionId: OTHER })).toEqual({
       established: true,
+      approvalMode: 'manual',
+      autoModeDisabled: false,
       drafted: false,
       profile: 'chat',
       workspace: null,

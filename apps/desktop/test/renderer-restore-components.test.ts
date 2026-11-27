@@ -371,3 +371,66 @@ it.each(
     expect(refresh).toHaveBeenCalledTimes(1)
   },
 )
+
+it.each([
+  ['allow', '允许', '这一步已放行。'],
+  ['ask', '需要你确认', '这一步要你确认。'],
+  ['deny', '不允许', '这一步已被拦下。'],
+] as const)(
+  '06 验收 44: the record shows an unknown summary code under %s verdict with that verdict’s neutral sentence',
+  async (verdict, verdictText, sentence) => {
+    const { ThreadTitleMenu } = await import(titleComponent)
+    const i18n = await createI18n('zh-CN', () => {})
+    const round = {
+      roundRunId: 'run',
+      runIds: ['run'],
+      endMessageId: 'end',
+      calls: [{ callKey: 'run:0:0', snapshotId: 'snapshot-before' }],
+      canRestore: true,
+      incompleteCoverage: false,
+      commandsWithoutSnapshot: false,
+    }
+    state.thread = true
+    state.open = true
+    state.failed = false
+    state.data = { ok: true, status: 'tree', incompleteRestores: [], rounds: [round] }
+    state.record = {
+      round,
+      messages: [
+        {
+          sessionId: 'session',
+          messageId: 'message',
+          orderSeq: 1,
+          entryId: 1,
+          createdAt: 0,
+          updatedAt: 0,
+          role: 'assistant',
+          status: 'complete',
+          content: [
+            { type: 'tool-request', name: 'Write', id: 'call', input: { file_path: '/work/a' } },
+          ],
+          calls: [
+            {
+              callKey: 'run:0:0',
+              outcome: {
+                state: 'completed',
+                effect: 'write',
+                isError: false,
+                source: null,
+                output: 'done',
+                reversibility: 'snapshotted',
+                permission: { verdict, code: 'unknown' as never, facts: { toolName: 'Write' } },
+              },
+            },
+          ],
+        },
+      ],
+    }
+    state.index = 0
+    const text = renderToStaticMarkup(
+      createElement(I18nextProvider, { i18n }, createElement(ThreadTitleMenu)),
+    ).replace(/<[^>]*>/g, '')
+    expect(text).toContain(`${verdictText} · ${sentence}`)
+    expect(text).not.toContain('returned an object')
+  },
+)

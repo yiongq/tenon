@@ -899,7 +899,14 @@ describe('05 recovery, lifecycle and coverage', () => {
         onWorkspaceChanged: (id, folders) => snapshots.setWorkspace(id, folders),
       })
       await handlers.get('session.selectProfile')!({}, { sessionId: SESSION, profile: 'cowork' })
-      await handlers.get('workspace.pick')!({}, { sessionId: SESSION })
+      // The folder was never 「以后都允许」ed (spec 06 D42): the pick adds nothing, the grant does.
+      const picked = (await handlers.get('workspace.pick')!({}, { sessionId: SESSION })) as {
+        data: { pendingGrant: { token: string } }
+      }
+      await handlers.get('workspace.grant')!(
+        {},
+        { sessionId: SESSION, token: picked.data.pendingGrant.token, choice: 'session' },
+      )
       await vi.waitFor(() => expect(['warming', 'tree']).toContain(snapshots.status(SESSION)))
       await snapshots.settled(SESSION)
       expectState(snapshots, 'tree')

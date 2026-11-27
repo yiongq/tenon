@@ -1,7 +1,7 @@
 import type { ConfirmRequestInput } from '@tenon-app/contracts'
 import type { TFunction } from 'i18next'
 import { visible } from './visible'
-import { categoryOf, reasonKey } from './approval-keys'
+import { FLAGGED_CATEGORIES, categoryOf, reasonKey } from './approval-keys'
 
 /**
  * What the minimal approval card shows and how its keys answer (spec 02 §最小审批卡; H3, D10, E4),
@@ -15,13 +15,30 @@ type SentenceCard = Pick<
   'reason' | 'kind' | 'facts' | 'target' | 'reversibility'
 >
 
+/** Why auto mode asked anyway (spec 06 §自动档的范围「照问的原因」; D24). */
+const AUTO_ASK: ReadonlySet<string> = new Set([
+  'no-snapshot',
+  'linux',
+  'platform',
+  'sandbox',
+  'redirect',
+])
+
 /**
  * ③ Routine questions and irreversible reasons need no second explanation (presentation-r1). A
- * command card a check asked about says what the check found, by category (06 D36).
+ * command card a check asked about says what the check found, by category (06 D36); a card auto mode
+ * asked anyway says why (D24). A category or an `autoAsk` this build does not know still delivers,
+ * with one general sentence (06 rule 13, D31).
  */
 export function whyKey(card: Omit<SentenceCard, 'reversibility'>): string | null {
-  if (card.reason === 'command' && typeof card.facts['category'] === 'string')
-    return `confirm.reason.flagged.${categoryOf(card.facts)}`
+  const category = card.facts['category']
+  if (card.reason === 'command' && typeof category === 'string')
+    return FLAGGED_CATEGORIES.includes(category)
+      ? `confirm.reason.flagged.${category}`
+      : 'confirm.reason.flagged.unknown'
+  const autoAsk = card.facts['autoAsk']
+  if ((card.reason === 'default' || card.reason === 'command') && typeof autoAsk === 'string')
+    return `confirm.reason.autoAsk.${AUTO_ASK.has(autoAsk) ? autoAsk : 'unknown'}`
   if (['default', 'command', 'irreversible'].includes(card.reason)) return null
   if (card.reason === 'network') {
     return card.kind === 'network' && card.target.type === 'search'
@@ -196,4 +213,25 @@ export function unavailableKey(card: Pick<SentenceCard, 'kind' | 'facts'>): stri
   return card.kind === 'command' && card.facts['sandbox'] === 'unavailable'
     ? 'confirm.sandboxUnavailable'
     : null
+}
+
+/**
+ * ① The question-style title, by kind and target — never words the model chose (H3). A Delete card
+ * asks its own question (06 §对 presentation-r1 §审批卡「问题式标题」的替换).
+ */
+export function titleKey(
+  card: Pick<ConfirmRequestInput, 'kind' | 'reversibility' | 'target' | 'facts'>,
+): string {
+  if (card.kind === 'file') {
+    if (card.facts['toolName'] === 'Delete') return 'confirm.title.file.delete'
+    return card.reversibility === 'read-only'
+      ? 'confirm.title.file.read'
+      : 'confirm.title.file.write'
+  }
+  if (card.kind === 'network') {
+    return card.target.type === 'search'
+      ? 'confirm.title.network.search'
+      : 'confirm.title.network.url'
+  }
+  return card.kind === 'command' ? 'confirm.title.command' : 'confirm.title.tool'
 }

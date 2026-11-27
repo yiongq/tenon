@@ -140,7 +140,8 @@ export function Composer(): JSX.Element {
         >
           <div
             data-testid="composer-lead"
-            className="flex min-h-8 min-w-0 flex-1 items-center gap-2"
+            // Wraps rather than overflows: a narrow window puts the task's mode menu on a second line.
+            className="flex min-h-8 min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1"
           >
             <ComposerLead />
           </div>

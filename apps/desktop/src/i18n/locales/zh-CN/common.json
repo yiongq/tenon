@@ -108,6 +108,39 @@
     "switchModel": "改用 {provider} {model}",
     "settings": "去设置"
   },
+  "approvalMode": {
+    "trigger": "审批档：{mode}",
+    "manual": {
+      "name": "手动",
+      "description": "会改动的都先问你。"
+    },
+    "auto": {
+      "name": "自动",
+      "description": "工作区里能还原的改动和沙箱里的命令不再问你；撤不回的、越出文件夹的、按规则拦下的照样问。",
+      "noSnapshot": "这个任务没法留底，改动照样问你"
+    },
+    "banner": {
+      "text": "自动档：能还原的改动不再问你",
+      "back": "切回手动"
+    },
+    "notice": {
+      "title": "自动档已打开",
+      "unasked": "工作区里能还原的改动、沙箱里的命令，不再一条条问你。",
+      "asked": "撤不回的、越出文件夹的、按规则拦下的，照样先问你。",
+      "restore": "改错了，点这一轮结算行上的「可还原」，一步回到之前。",
+      "settings": "设置",
+      "dismiss": "知道了"
+    },
+    "downgrade": {
+      "consecutive": "连着被拦了 {count} 次，已停下并切回手动档",
+      "round": "这一轮被拦了 {count} 次，已停下并切回手动档",
+      "close": "关闭"
+    },
+    "settings": {
+      "title": "审批档",
+      "hint": "新任务默认用这一档；正在用的任务不变。"
+    }
+  },
   "thread": {
     "empty": "开始对话",
     "you": "你",
@@ -459,7 +492,8 @@
       "failed": "没做成",
       "delete": "删了这个文件"
     },
-    "Delete": "删除 {path}"
+    "Delete": "删除 {path}",
+    "whyUnasked": "为什么没问"
   },
   "closure": {
     "user-rejected": "你拒绝了这个操作。",
@@ -510,7 +544,8 @@
     "title": {
       "file": {
         "read": "读取这个文件？",
-        "write": "修改这个文件？"
+        "write": "修改这个文件？",
+        "delete": "删除这个文件？"
       },
       "command": "运行这条命令？",
       "network": {
@@ -543,10 +578,19 @@
         "exfiltration": "这次请求可能把你的数据带到别处。",
         "inspector-failed": "Tenon 没能确认这一步是否安全。",
         "hidden-characters": "路径或命令里有看不见的字符，已经标出来，先给你看一眼。",
-        "control-characters": "路径或命令里有控制字符，已经标出来，先给你看一眼。"
+        "control-characters": "路径或命令里有控制字符，已经标出来，先给你看一眼。",
+        "unknown": "Tenon 的检查要你再看一眼这一步。"
       },
       "command": "运行命令前要你同意。",
-      "interaction-required": "这个连接器要求你亲自确认。"
+      "interaction-required": "这个连接器要求你亲自确认。",
+      "autoAsk": {
+        "no-snapshot": "这个任务没法留底，自动档里也先问你。",
+        "linux": "在 Linux 上，自动档里的命令照样先问你：这里护不住命令新建的仓库文件。",
+        "platform": "在这台电脑上，自动档里的命令照样先问你。",
+        "sandbox": "命令的隔离还没准备好或只部分生效，自动档里先问你。",
+        "redirect": "这条命令会把输出写进文件、盖掉原来的内容，自动档里也先问你。",
+        "unknown": "这一步在自动档里也先问你。"
+      }
     },
     "irreversible": "撤不回。",
     "allow": "允许",
@@ -660,7 +704,25 @@
     "prefillPending": "上次用过，尚未加入",
     "prefillUse": "用这 {count} 个文件夹",
     "rootRefused": "不能选择磁盘根目录，请选择其中的文件夹。",
-    "homeWarning": "你选择了主目录或它的上级，请留意其中的私人文件。"
+    "homeWarning": "你选择了主目录或它的上级，请留意其中的私人文件。",
+    "grant": {
+      "title": "允许访问这个文件夹",
+      "titleMany": "允许访问这 {count} 个文件夹",
+      "description": "允许后，这个任务可以读取和查找里面的文件；改动照样按审批档问你。",
+      "alwaysNote": "选「以后都允许」，以后再选这里不再弹出这个框；新任务不会自动带上它。",
+      "cancel": "取消",
+      "always": "以后都允许",
+      "session": "允许",
+      "stale": "这次选择已失效，请重新选择文件夹。"
+    },
+    "access": {
+      "manage": "管理文件夹访问",
+      "title": "文件夹访问",
+      "hint": "点过「以后都允许」的文件夹列在这里，以后选它们不再弹框。撤销只影响以后的选择，正在用的任务照用。",
+      "empty": "还没有。",
+      "revoke": "撤销",
+      "revokeLabel": "撤销 {path}"
+    }
   },
   "mcp": {
     "settings": "设置",
@@ -842,7 +904,7 @@
   },
   "sandbox": {
     "title": "权限与网络",
-    "description": "管理命令能连接的网站与文件访问范围。",
+    "description": "新任务的审批档、文件夹访问，以及命令能连接的网站。",
     "loading": "正在读取设置…",
     "allowlist": "网络白名单",
     "siteScope": "按网站放行，不按操作：列在这里的网站，命令可以连接，也可以向它上传内容。",
@@ -1034,8 +1096,13 @@
       "inspector-flagged": "检查发现看不见的字符，需要确认",
       "own-output-read": "读取本会话生成的内容",
       "no-approval-needed": "这项操作无需确认",
-      "auto-mode": "按自动模式的设置允许",
-      "task-grant": "你已允许这个任务执行"
+      "auto-mode": "自动档放行",
+      "task-grant": "你已允许这个任务执行",
+      "unknown": {
+        "allow": "这一步已放行。",
+        "ask": "这一步要你确认。",
+        "deny": "这一步已被拦下。"
+      }
     },
     "promisedSkip": {
       "excluded": "卡上标过有快照，因为这个路径已被排除，这次跳过。",

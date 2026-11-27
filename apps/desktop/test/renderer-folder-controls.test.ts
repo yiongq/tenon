@@ -24,11 +24,12 @@ beforeAll(async () => {
 })
 
 const leadPath = '../src/renderer/src/components/composer/ComposerLead.tsx'
-async function render(
-  facts: SessionFactsResponse | null,
-  locale: 'zh-CN' | 'en' = 'zh-CN',
-): Promise<string> {
-  context.facts = facts
+/** The facts these cases vary; the approval mode stays manual. */
+type Facts = Omit<SessionFactsResponse, 'approvalMode'>
+const withMode = (facts: Facts | null): SessionFactsResponse | null =>
+  facts === null ? null : { approvalMode: 'manual', ...facts }
+async function render(facts: Facts | null, locale: 'zh-CN' | 'en' = 'zh-CN'): Promise<string> {
+  context.facts = withMode(facts)
   const { ComposerLead } = await import(leadPath)
   return renderToStaticMarkup(
     createElement(
@@ -68,8 +69,8 @@ it('presentation-r1 验收 10: no folder controls before the facts arrive', asyn
 
 it('presentation-r1 验收 10: facts refreshes keep the toggle and open folder chip at the same React identity', async () => {
   const { ComposerLead } = await import(leadPath)
-  const identities = (facts: SessionFactsResponse) => {
-    context.facts = facts
+  const identities = (facts: Facts) => {
+    context.facts = withMode(facts)
     // React preserves mounted state for the same type + key at the same sibling position.
     const children = (ComposerLead() as ReactElement<{ children: ReactNode[] }>).props.children
     return children.map((child) => {

@@ -671,3 +671,74 @@ it('05 验收 48: successful Delete renders the file and consequence in both loc
     ),
   ).toBeNull()
 })
+
+function allowedWrite(code: string): ToolOutcomeViewContract {
+  return {
+    effect: 'write',
+    reversibility: 'snapshotted',
+    state: 'completed',
+    source: null,
+    output: 'ok',
+    permission: { verdict: 'allow', code: code as never, facts: { toolName: 'Write' } },
+  }
+}
+
+it('06 验收 38: an expanded allowed row shows why it was not asked; a folded one, a carded one and an asked one do not', async () => {
+  const allowed = allowedWrite
+  const input = { file_path: '/work/a.txt', content: 'x' }
+  const why = (html: string) =>
+    strip(/data-testid="tool-row-why"[^>]*>([\s\S]*?)<\/p>/.exec(html)?.[1] ?? '')
+  try {
+    context.expanded = true
+    expect(why(await renderRow(null, 'Write', input, zh, false, allowed('auto-mode')))).toBe(
+      '为什么没问 · 自动档放行',
+    )
+    expect(why(await renderRow(null, 'Write', input, en, false, allowed('session-allowed')))).toBe(
+      'Why it wasn’t asked · You allowed this for the session',
+    )
+    // A call a card asked about, or one that was not allowed, adds nothing.
+    const carded: ToolOutcomeViewContract = {
+      ...allowed('default-ask'),
+      approval: {
+        outcome: 'allowed',
+        scope: 'once',
+        target: { type: 'path', path: '/work/a.txt' },
+      },
+    }
+    expect(await renderRow(null, 'Write', input, zh, false, carded)).not.toContain('tool-row-why')
+    const denied: ToolOutcomeViewContract = {
+      ...allowed('org-policy'),
+      permission: { verdict: 'deny', code: 'org-policy', facts: { toolName: 'Write' } },
+    }
+    expect(await renderRow(null, 'Write', input, zh, false, denied)).not.toContain('tool-row-why')
+    // Folded, the row is as it was.
+    context.expanded = false
+    expect(await renderRow(null, 'Write', input, zh, false, allowed('auto-mode'))).not.toContain(
+      'tool-row-why',
+    )
+  } finally {
+    context.expanded = false
+  }
+})
+
+it.each(['allow', 'ask', 'deny'] as const)(
+  '06 验收 44: an unknown summary code under %s verdict changes the expanded row only where it already shows a reason',
+  async (verdict) => {
+    const outcome: ToolOutcomeViewContract = {
+      effect: 'write',
+      state: verdict === 'deny' ? 'not-run' : 'completed',
+      source: verdict === 'deny' ? 'policy' : null,
+      output: '',
+      permission: { verdict, code: 'unknown' as never, facts: { toolName: 'Write' } },
+    }
+    try {
+      context.expanded = true
+      const html = await renderRow(null, 'Write', { file_path: '/work/a.txt' }, zh, false, outcome)
+      // Only an allowed call already has a reason line; there it is the neutral sentence.
+      expect(/data-testid="tool-row-why"/.test(html)).toBe(verdict === 'allow')
+      expect(html.includes('这一步已放行。')).toBe(verdict === 'allow')
+    } finally {
+      context.expanded = false
+    }
+  },
+)

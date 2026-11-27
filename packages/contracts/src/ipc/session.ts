@@ -129,6 +129,10 @@ export const sessionMessages = defineRoute('session.messages', {
 
 // ----- spec 02: the profile, the workspace and the draft before a session exists ------------------
 
+/** Spec 06: a task's approval mode. */
+export const approvalModeSchema = z.enum(['manual', 'auto'])
+export type ApprovalMode = z.infer<typeof approvalModeSchema>
+
 /**
  * A workspace answer (spec 02 §工作区「路由」; D11, A9): the whole list after the change, with where it
  * came from — or why nothing changed. Written like `providerWriteResultSchema`; the folders restate
@@ -146,19 +150,42 @@ export const workspaceResultSchema = z.discriminatedUnion('ok', [
   }),
 ])
 
+/**
+ * Folders picked or prefilled that were never 「以后都允许」 (spec 06 §界面「文件夹授权」; D42): none of
+ * them is in the session yet. `token` names main's own copy of the paths — the only thing the
+ * renderer hands back — and lives in main's memory, bound to this session, for one use.
+ */
+export const pendingGrantSchema = z.object({
+  token: z.string().min(1),
+  folders: z.array(z.string().min(1)).min(1),
+})
+export type PendingGrant = z.infer<typeof pendingGrantSchema>
+
+const workspaceSelectionOkSchema = z.object({
+  ok: z.literal(true),
+  folders: z.array(z.string().min(1)),
+  origin: z.enum(['picked', 'dedicated']),
+  warning: z.literal('home').optional(),
+})
+const workspaceSelectionCodes = [
+  'not-cowork',
+  'unknown-session',
+  'not-in-list',
+  'root-folder',
+] as const
+
 const workspaceSelectionResultSchema = z.discriminatedUnion('ok', [
-  z.object({
-    ok: z.literal(true),
-    folders: z.array(z.string().min(1)),
-    origin: z.enum(['picked', 'dedicated']),
-    warning: z.literal('home').optional(),
-  }),
-  z.object({
-    ok: z.literal(false),
-    code: z.enum(['not-cowork', 'unknown-session', 'not-in-list', 'root-folder']),
-  }),
+  workspaceSelectionOkSchema.extend({ pendingGrant: pendingGrantSchema.optional() }),
+  z.object({ ok: z.literal(false), code: z.enum(workspaceSelectionCodes) }),
 ])
 export type WorkspaceResult = z.infer<typeof workspaceSelectionResultSchema>
+
+/** A grant's answer: the list after it, or `stale` — another session's, used or voided (D42). */
+const workspaceGrantResultSchema = z.discriminatedUnion('ok', [
+  workspaceSelectionOkSchema,
+  z.object({ ok: z.literal(false), code: z.enum([...workspaceSelectionCodes, 'stale']) }),
+])
+export type WorkspaceGrantResult = z.infer<typeof workspaceGrantResultSchema>
 
 /** Only the session: a folder never comes from the renderer, only from main's dialog or prefill. */
 const workspaceTarget = z.object({ sessionId: canonicalSessionIdSchema }).strict()
@@ -172,6 +199,30 @@ export const workspacePick = defineRoute('workspace.pick', {
 export const workspaceUsePrefill = defineRoute('workspace.usePrefill', {
   request: workspaceTarget,
   response: workspaceSelectionResultSchema,
+})
+/**
+ * Answers a pending grant (D42): `session` adds the picked folders to this session only, `always`
+ * also keeps the ones never granted in `config.json`'s `folderAccess`. A cancel calls nothing.
+ */
+export const workspaceGrant = defineRoute('workspace.grant', {
+  request: z
+    .object({
+      sessionId: canonicalSessionIdSchema,
+      token: z.string().min(1),
+      choice: z.enum(['session', 'always']),
+    })
+    .strict(),
+  response: workspaceGrantResultSchema,
+})
+/** The folders 「以后都允许」 kept, as main resolved them (real absolute paths). */
+export const workspaceAccess = defineRoute('workspace.access', {
+  request: z.object({}).strict(),
+  response: z.object({ folders: z.array(z.string().min(1)) }),
+})
+/** Drops one kept folder; sessions using it keep it. Answers the list after. */
+export const workspaceRevokeAccess = defineRoute('workspace.revokeAccess', {
+  request: z.object({ folder: z.string().min(1) }).strict(),
+  response: z.object({ folders: z.array(z.string().min(1)) }),
 })
 /** Removes one folder already in the list; the list falls back to the dedicated folder when empty. */
 export const workspaceRemove = defineRoute('workspace.remove', {
@@ -201,6 +252,13 @@ export const sessionFactsResponse = z.object({
     .nullable(),
   lastEndpoint: providerEndpointSchema.optional(),
   chosen: z.object({ providerId: z.string().min(1) }).optional(),
+  /**
+   * Spec 06 §档位怎么存、怎么切: the Tape's mode once established, the draft's choice or the default
+   * before; always manual for a chat, and manual while the policy turns auto off (D40).
+   */
+  approvalMode: approvalModeSchema,
+  /** The policy turns auto off: the menu has no auto item and the banner does not show (D40). */
+  autoModeDisabled: z.literal(true).optional(),
 })
 export type SessionFactsResponse = z.infer<typeof sessionFactsResponse>
 
@@ -218,6 +276,22 @@ export const sessionSelectProfile = defineRoute('session.selectProfile', {
 export const sessionFacts = defineRoute('session.facts', {
   request: z.object({ sessionId: canonicalSessionIdSchema }).strict(),
   response: sessionFactsResponse,
+})
+
+/**
+ * Spec 06 §档位怎么存、怎么切: the draft's choice before the session exists, a `by: 'user'` fact
+ * after, through the root's mailbox. `refused` while shutting down; a chat's or a child's id is
+ * `not-cowork` (D41).
+ */
+export const sessionSetApprovalMode = defineRoute('session.setApprovalMode', {
+  request: z.object({ sessionId: canonicalSessionIdSchema, mode: approvalModeSchema }).strict(),
+  response: z.discriminatedUnion('ok', [
+    z.object({ ok: z.literal(true), mode: approvalModeSchema }),
+    z.object({
+      ok: z.literal(false),
+      code: z.enum(['not-cowork', 'unknown-session', 'policy', 'refused']),
+    }),
+  ]),
 })
 
 // ----- spec 02: the session's own model choice (01 修补 6「给会话选模型」; M5, A11, M6) ------------

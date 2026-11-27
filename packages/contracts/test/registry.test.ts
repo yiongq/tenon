@@ -65,11 +65,15 @@ describe('ipc registry', () => {
       'session.modelChoice',
       'session.selectModel',
       'session.selectProfile',
+      'session.setApprovalMode',
       'snapshot.preview',
       'snapshot.restore',
       'snapshot.rounds',
+      'workspace.access',
+      'workspace.grant',
       'workspace.pick',
       'workspace.remove',
+      'workspace.revokeAccess',
       'workspace.usePrefill',
     ])
     expect([...EVENT_CHANNELS].toSorted()).toEqual([
