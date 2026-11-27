@@ -314,7 +314,8 @@ export async function createDesktopSandboxRuntime(q: {
   let folders: (sessionId: string) => Promise<readonly AbsolutePath[]> = noFolders
   const home = homedir() as AbsolutePath
   const platform = process.platform === 'darwin' ? 'darwin' : 'linux'
-  const helpers = helperPaths()
+  // PROBE: packaged builds take the helpers from the resources dir, not from app.asar.
+  const helpers = helperPaths(process.arch, q.isPackaged ? process.resourcesPath : undefined)
   const fs = desktopSandboxFs()
   const paths = {
     platform,

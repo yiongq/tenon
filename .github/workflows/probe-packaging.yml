@@ -1,0 +1,149 @@
+# PROBE (probe/packaging, never merged): evidence for docs/features/packaging and
+# docs/features/error-logs. The draft PR carrying this file is closed once the runs are read.
+# It builds the desktop app with electron-builder, installs the packages the way a user would, runs
+# them, and prints what happened. No secrets, no release, nothing leaves the runner except the
+# probe-out artifact.
+name: Probe packaging
+
+on:
+  push:
+    branches: [probe/packaging]
+  workflow_dispatch:
+
+concurrency:
+  group: probe-packaging-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  LEFTHOOK: '0'
+  ELECTRON_GET_NO_PROGRESS: '1'
+
+jobs:
+  macos:
+    name: probe-macos
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      # packaging P1: strictDepBuilds stays on, so this fails if a new dependency has an unlisted
+      # install script.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # packaging P6 (development app name) and error-logs P2 (main-process errors), unpackaged.
+      - name: Probe dev build
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/mac.sh dev
+      # error-logs P1: crash dumps from a development build.
+      - name: Probe dev crash
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/mac.sh crash-dev
+      - name: Build packages
+        if: ${{ !cancelled() }}
+        run: bash .github/probe/mac.sh build
+      - name: Probe P2 helper files
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/mac.sh p2
+      - name: Probe P4 ad-hoc identity
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/mac.sh p4
+      - name: Probe P1 install and launch
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/mac.sh p1
+      - name: Probe P5 hardened runtime
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/mac.sh p5
+      - name: Probe P6 app names
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/mac.sh p6
+      - name: Probe P1 crash on the installed app
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/mac.sh crash-app
+      - name: Probe dmg
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/mac.sh dmg
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: probe-macos
+          path: probe-out/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  linux:
+    name: probe-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-26.04]
+    # 26.04 is a side question (packaging P3); its runner label may not be there yet.
+    continue-on-error: ${{ matrix.os == 'ubuntu-26.04' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: OS libraries and host readings
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/linux.sh libs
+      - name: Probe dev build
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/linux.sh dev
+      - name: Probe dev crash
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/linux.sh crash-dev
+      - name: Build deb
+        if: ${{ !cancelled() }}
+        run: bash .github/probe/linux.sh build
+      - name: Probe P3 install
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/linux.sh install
+      - name: Probe P1 launch
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/linux.sh p1
+      - name: Install the sandbox's Linux dependencies
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/linux.sh tools
+      - name: Probe P3 sandbox settings
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/linux.sh p3
+      - name: Probe P1 crash on the installed app
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: bash .github/probe/linux.sh crash-app
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: probe-${{ matrix.os }}
+          path: probe-out/
+          retention-days: 14
+          if-no-files-found: ignore

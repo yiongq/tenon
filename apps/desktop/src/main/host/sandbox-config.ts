@@ -455,7 +455,16 @@ export function protectionList(input: Pick<SandboxHostPaths, 'home' | 'zdotdir' 
  * srt's package dir (a real path) and the two helpers in it, passed to srt explicitly rather than
  * left to its `import.meta.url` lookup, which goes wrong once bundled (spec §依赖; T31, srt-m5).
  */
-export function helperPaths(arch: string = process.arch): HelperPaths {
+export function helperPaths(arch: string = process.arch, resourcesDir?: string): HelperPaths {
+  // PROBE: a packaged build ships the helpers outside app.asar (extraResources), and the
+  // write-denied "package dir" becomes that resources dir.
+  if (resourcesDir !== undefined) {
+    return {
+      packageDir: resourcesDir as AbsolutePath,
+      applySeccomp: under(resourcesDir, `sandbox/seccomp/${arch}/apply-seccomp`),
+      javaAgentJar: under(resourcesDir, 'sandbox/java-proxy-agent/srt-proxy-agent.jar'),
+    }
+  }
   const manifest = createRequire(import.meta.url).resolve(
     '@anthropic-ai/sandbox-runtime/package.json',
   )

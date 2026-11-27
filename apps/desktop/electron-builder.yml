@@ -1,0 +1,42 @@
+# PROBE (probe/packaging, never merged): packaging evidence for docs/features/packaging-and-logs.
+# productName lives only here, not in package.json, so the development app name stays unchanged
+# (probe P6 checks both sides).
+appId: com.yiongspace.tenon
+productName: Tenon
+# Both native modules are Node-API prebuilds; @electron/rebuild would only run node-gyp for nothing.
+npmRebuild: false
+directories:
+  output: dist
+files:
+  - out/**/*
+  - package.json
+asar: true
+mac:
+  target:
+    - target: zip
+      arch: [arm64]
+  # "-" is ad-hoc: electron-builder 26 signs nothing without it.
+  identity: '-'
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  category: public.app-category.developer-tools
+  # sandbox-runtime's two helpers, outside app.asar: an asar path cannot be spawned or read by java.
+  extraResources:
+    - from: node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/arm64
+      to: sandbox/seccomp/arm64
+    - from: node_modules/@anthropic-ai/sandbox-runtime/vendor/java-proxy-agent
+      to: sandbox/java-proxy-agent
+linux:
+  target:
+    - target: deb
+      arch: [x64]
+  maintainer: yiongq <11135932+yiongq@users.noreply.github.com>
+  category: Development
+  executableName: tenon
+  extraResources:
+    - from: node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/x64
+      to: sandbox/seccomp/x64
+    - from: node_modules/@anthropic-ai/sandbox-runtime/vendor/java-proxy-agent
+      to: sandbox/java-proxy-agent
+deb:
+  packageName: tenon

@@ -1,0 +1,16 @@
+def short: if . == null then "-" else (tojson | .[0:600]) end;
+"app: " + ([.app.name, .app.getName, .app.version, .app.isPackaged, .app.userData] | short),
+"packaged package.json: " + (.packageJson | short),
+"versions: " + (.process.versions | short) + " " + ([.process.platform, .process.arch] | short),
+"sqlite: " + (.native.sqlite | short),
+"keyring: " + (.native.keyring | short),
+"helper applySeccomp (in use): " + (.helpers.inUse.applySeccomp | short),
+"helper jar (in use): " + (.helpers.inUse.javaAgentJar | short),
+"helper applySeccomp (unpatched path): " + (.helpers.legacy.applySeccomp | short),
+"sandbox: " + (.sandbox | {state, posture, reasons, platform} | short),
+"cmd echo: " + (.sandbox.commands.echo | short),
+"cmd write inside: " + (.sandbox.commands.writeInside | short),
+"cmd write outside: " + (.sandbox.commands.writeOutside | short),
+"outside file created: " + (.sandbox.commands.outsideFileExists | short),
+"chromium: " + (.chromium | short),
+"resources: " + (.resources | {entries: [.entries[]? | select(test("lproj$") | not)], unpackedNodeFiles} | short)
