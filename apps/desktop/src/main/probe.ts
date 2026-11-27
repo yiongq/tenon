@@ -2,10 +2,12 @@
 // document between TENON_PROBE_BEGIN / TENON_PROBE_END lines (and writes it to TENON_PROBE_OUT when
 // set), then exits. It touches no real credential store and uses none of the repository's test seams.
 import { execFileSync, spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import {
   accessSync,
   constants,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -17,12 +19,23 @@ import {
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { crashReporter } from 'electron'
 import type { App, BrowserWindow } from 'electron'
+import { toolOutputDirFor } from '@tenon-app/kernel'
 import type { AbsolutePath } from '@tenon-app/kernel'
 import type { createDesktopHost } from './host/index.js'
 import { helperPaths } from './host/sandbox-config.js'
 
 type ProbeHost = Awaited<ReturnType<typeof createDesktopHost>>
+
+/**
+ * error-logs P1's positive control: the same crash with collection switched on. Off unless
+ * TENON_PROBE_CRASHREPORTER=1; nothing in the app starts the crash reporter otherwise.
+ */
+export function probeCrashControl(): void {
+  if (process.env['TENON_PROBE_CRASHREPORTER'] !== '1') return
+  crashReporter.start({ submitURL: 'http://127.0.0.1:9/', uploadToServer: false })
+}
 type Section = Record<string, unknown>
 
 const message = (error: unknown): string =>
@@ -241,9 +254,17 @@ async function commandsSection(host: ProbeHost): Promise<Section> {
     PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
     HOME: homedir(),
   }
+  // The sandbox only accepts a workspace that is one of a session's folders (读法 35): make this
+  // one a session of its own, with its tool-output folder, as the session service would.
+  const sessionId = randomUUID()
+  mkdirSync(toolOutputDirFor(host.identity.profileDir as AbsolutePath, sessionId), {
+    recursive: true,
+  })
+  host.sandbox.bindSessionFolders((id) => Promise.resolve(id === sessionId ? [workspace] : []))
   const run = async (id: string, script: string): Promise<Section> => {
     const commandId = `probe-${id}`
     try {
+      host.sandbox.beforeWrap({ commandId, sessionId, hosts: [] })
       const wrapped = await host.sandbox.wrap({
         commandId,
         argv: ['/bin/sh', '-c', script],

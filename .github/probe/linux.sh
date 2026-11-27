@@ -71,9 +71,15 @@ phase_crash_dev() { # error-logs P1: a development build, data dir in a temp dir
   local data="$WORK/ud-dev"
   rm -rf "$data"
   cd "$DESK" || exit 1
-  res "== error-logs P1: crash dumps from a development build (data dir $data)"
+  res "== error-logs P1: crash dumps from a development build, no crashReporter.start (data dir $data)"
   crash_run dev 'electron/dist/electron( |$)' "$data" \
     xvfb-run -a pnpm exec electron . --no-sandbox "--user-data-dir=$data"
+  # The positive control: the same two SIGSEGVs with crashReporter.start({ uploadToServer: false }).
+  data="$WORK/ud-dev-control"
+  rm -rf "$data"
+  res "== error-logs P1 control: the same, with crashReporter.start (data dir $data)"
+  crash_run dev-control 'electron/dist/electron( |$)' "$data" \
+    env TENON_PROBE_CRASHREPORTER=1 xvfb-run -a pnpm exec electron . --no-sandbox "--user-data-dir=$data"
 }
 
 phase_build() {

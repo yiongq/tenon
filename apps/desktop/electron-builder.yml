@@ -1,8 +1,12 @@
 # PROBE (probe/packaging, never merged): packaging evidence for docs/features/packaging-and-logs.
-# productName lives only here, not in package.json, so the development app name stays unchanged
-# (probe P6 checks both sides).
+# productName stays out of the source package.json, so the development app name is unchanged
+# (probe P6 checks both sides); the packaged copy gets it through extraMetadata below.
 appId: com.yiongspace.tenon
 productName: Tenon
+# Electron takes app.name from the package.json inside the asar, not from this file; without this
+# the packaged app is still called @tenon-app/desktop (probe run 1, packaging P6).
+extraMetadata:
+  productName: Tenon
 # Both native modules are Node-API prebuilds; @electron/rebuild would only run node-gyp for nothing.
 npmRebuild: false
 directories:
@@ -33,6 +37,9 @@ linux:
   maintainer: yiongq <11135932+yiongq@users.noreply.github.com>
   category: Development
   executableName: tenon
+  # The default file name starts with the scoped package name (@tenon-app/desktop_...), whose
+  # slash makes fpm write into a folder that does not exist.
+  artifactName: 'tenon_${version}_${arch}.${ext}'
   extraResources:
     - from: node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp/x64
       to: sandbox/seccomp/x64
