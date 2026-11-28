@@ -905,6 +905,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       counted += limitTokensOf(attempt.usage, encoderOf(encoded)?.wire ?? null)
       lastStop = attempt.stop?.reason ?? null
       errorCode = attempt.error?.code ?? null
+      if (attempt.error !== null) ctx.log(attemptFailedLine(runId, attempt, attempt.error))
       const route = routeOf(attempt, ctx.maxTokens)
       const attemptEntry = attemptFact(ctx, {
         encoded,
@@ -1598,6 +1599,22 @@ function attemptError(
     providerCode: event.providerCode,
     detail: event.detail,
   }
+}
+
+/**
+ * The log line of a model request that failed (error-logs §记什么「模型请求失败」), one per attempt:
+ * who was asked and what came back. `detail` is the attempt fact's own, already redacted and short.
+ */
+function attemptFailedLine(
+  runId: string,
+  attempt: AttemptOutcome,
+  error: NonNullable<AttemptOutcome['error']>,
+): string {
+  return (
+    `[provider] run ${runId} attempt failed: provider=${attempt.providerId} model=${attempt.modelId}` +
+    ` code=${error.code} status=${error.status ?? '-'} providerCode=${error.providerCode ?? '-'}` +
+    ` retryable=${error.retryable} detail=${error.detail}`
+  )
 }
 
 /** `encoder` for the attempt fact, or nothing. */

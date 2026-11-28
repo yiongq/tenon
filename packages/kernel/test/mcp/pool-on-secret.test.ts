@@ -71,7 +71,6 @@ function start(initial: McpServerRuntime, host = createMemoryHost()) {
     onPin: async () => {},
     onIssuer: async () => {},
     onChange: () => {},
-    // @ts-expect-error — `onSecret` is added to McpPoolOptions by error-logs segment 1
     onSecret,
   })
   cleanup.push(() => {
