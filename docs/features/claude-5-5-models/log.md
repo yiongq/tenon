@@ -333,3 +333,35 @@
 - 全量 e2e：CI 的 e2e 作业跑的是 `xvfb-run pnpm test:e2e`（全量），278 expected、0 unexpected、0 flaky、6 skipped；跳过的 6 例都是 macOS 专属（composer-frame 2、navigation 1、stop-exit 3），与本 spec 无关。没有因会话不换变红的用例。
 - 全量 vitest：6233 例，6092 passed、0 failed、141 pending；macOS 作业 401 例，384 passed、0 failed、17 pending。
 - 这一步只核到「每条验收有点名用例且在 CI 上通过」；各用例的断言是否空心，留给第 15 步之后的评审逐条读。
+
+## 评审 · 2026-11-28 · 审过 b93481c
+结论：不通过    评审：派发会话起的独立子 agent，Opus 5.5，新上下文，没看作者对话；读评审包、log.md 全文、plan.md、`git diff 48331f2 b93481c`、总参考「以后再说」、docs/spec-driven-dev.md §6 §7 §8，逐条读验收 1–19 点名用例的断言和被测代码；用 `gh run download 46120326933` 取三份报告核对第 14 步，并在临时 worktree 里重跑 `spec-check --all --report`；没跑 live 与 e2e，没读钥匙串或 .env
+突变：16 个，在 b93481c 的临时 worktree 里跑，跑完已移除；先跑 18 个相关测试文件，没变红的再跑全量（全量基线有 6 例与改动无关的环境红，比对时扣除）；首跑存活 7 个：R5、R6、R15 相关加全量都绿，R5 记为 major，R6、R15 记为建议；R18、R19 只有 e2e 能抓（需 e2e，未跑；CI 上分别由 model-menu.spec.ts 验收 9 与 provider-settings.spec.ts 验收 17 抓）；R21、R22 是等价突变（Ollama 与实例的行没有 family）；其余 9 个变红
+发现：
+- [major] 验收 16 的「`provider.list` 的行带 `family` 与 `familyNameKey`」只对 anthropic 的 Sonnet 5 一行断言，智谱四行丢掉这两个键没有用例发现；后果是智谱设置卡不再列「最新的 GLM…」指针项，§跟随最新「谁写指针」要求 anthropic、智谱两张卡都先列指针，e2e 也只看 anthropic 卡和 Ollama 卡 · 证据：突变 R5（provider-routes.ts `menuRow` 的条件加 `|| definition.wire === 'openai-chat'`）相关 434 例与全量 6233 例都绿，全量只红基线上同样红的 6 例 · 待作者处置
+- [建议] log「验收核对 · 2026-11-28」写验收 13 有 19 例，CI 报告里标题点名验收 13 的用例是 10 例（model-families.test.ts 9 例加 definitions.test.ts「验收 1、13」1 例）；19 是把 describe 标题里的「验收 13」按 fullName 也算进去的 18 次再加 1；其余各条与全量 vitest、e2e 的数字都对得上 · 证据：`gh run download 46120326933` 的 vitest.json 按用例标题计数 · 待作者处置
+- [建议] Sonnet 5、Haiku 4.5 的用途句（数据表和开放问题 4 定的「上一代 Sonnet（旧版）」「上一代 Haiku（旧版）」）没有用例钉住值；验收 8 只查键在不在和占位符，验收 9 只看两新行 · 证据：突变 R6 把两份 locale 的这两句改回本 spec 之前的值，相关与全量都绿，e2e 里也没有用例读这两句 · 不修：只算建议
+- [建议] 验收 2「关思考且 tools 非空本地拒绝」只测了 effort high 一种 · 证据：突变 R15（拒绝条件加 `&& req.effort !== undefined`）相关与全量都绿 · 不修：只算建议
+- [建议] 总参考「以后再说」新加的第一条（Haiku 4.5 公告）写「新开一步」，没写在哪里开：原 plan 写「在这里新开一步」，spec §Haiku 4.5 写「到时在本 spec 的 plan「以后」记一步」，plan 没有这一节，docs/spec-driven-dev.md §6 又说这一节的条目要做先写 spec · 无证据 · 不修：只算建议
+
+## 评审处置 · 2026-11-28（审过 b93481c 那一轮）
+
+- [major] 验收 16 只断言了 anthropic 一行的 `family`、`familyNameKey` · 已修 8bd3ba3：model-selection.test.ts「claude-5-5-models 验收 16」加智谱四行的 `family` 与 `familyNameKey`（写死期望值，不从被测代码算）；作者在工作区打上突变 R5（`menuRow` 条件加 `|| definition.wire === 'openai-chat'`），这例变红，已还原。
+- [建议] 第 14 步记录里验收 13 写成 19 例 · 已修（本条所在提交）：见下面补记，原记录不改（log 只往后追加）。
+- [建议] 两行旧版的用途句没有用例钉住 · 已修 8bd3ba3：copy-coverage.test.ts 加「keeps the purpose sentences open question 4 chose for the two legacy rows — claude-5-5-models 验收 8」，两份 locale 四句写死；突变 R6（改 zh-CN 那句）变红，已还原。
+- [建议] 关思考带 tools 只测了 effort high · 已修 8bd3ba3：thinking-shapes.test.ts 那例改成 low、medium、high 与不传四种都要本地拒绝；突变 R15（拒绝条件加 `&& req.effort !== undefined`）变红，已还原。
+- [建议] 「以后再说」的 Haiku 4.5 一条没写在哪里新开一步 · 已修 32d5b65：改成「先写一份 lite spec 再改」。
+- 补记：「验收核对 · 2026-11-28（第 14 步）」里「13 definitions.test.ts、model-families.test.ts 19 例」应为 10 例（model-families.test.ts 9 例加 definitions.test.ts「验收 1、13」1 例）；19 是把 describe 标题里的「验收 13」也按完整标题算进去了。其余数字评审核过无误。
+
+## 评审 · 2026-11-28 · 审过 902d979
+结论：通过    评审：派发会话起的独立子 agent，Opus 5.5，新上下文，没看作者对话；读上一轮报告（tenon-notes 2026-11-28-c55-live/review-b93481c.md）、log.md「评审 · 审过 b93481c」与紧跟的「评审处置」、`git diff b93481c 902d979` 全文与四个提交各自的文件、spec §Haiku 4.5 与验收 2、8、16、docs/spec-driven-dev.md §6 §8、spec-check 的 review 检查，以及新断言的被测代码（provider-routes.ts `menuRow`、renderer provider-model-selection.ts `pointerRows`、anthropic-messages.ts 关思考一支、两份 locale）；在 902d979 的临时 worktree 里打突变，跑三个改动测试文件的 lint、格式与类型检查和 spec-check；没跑 live 与 e2e，没起 Electron，没读钥匙串或 .env，没改作者工作区
+突变：17 个，在 902d979 的临时 worktree 里跑，跑完已移除；R5、R6、R15 照上一轮原样重打都变红，另出 14 个绕开新断言的变体；首跑存活 1 个：R5e（`menuRow` 只让 haiku 家族丢键）三个相关文件与全量 desktop vitest 都绿（全量只红上一轮记下的 6 例环境红），只有 CI 上 provider-settings.spec.ts「验收 17」的 11 个选项能抓（需 e2e，未跑），照上一轮 R18、R19 的算法不算存活；其余 16 个变红
+发现：
+- [major] 验收 16 的「`provider.list` 的行带 `family` 与 `familyNameKey`」只对 anthropic 的 Sonnet 5 一行断言，智谱四行丢掉这两个键没有用例发现；后果是智谱设置卡不再列「最新的 GLM…」指针项，§跟随最新「谁写指针」要求 anthropic、智谱两张卡都先列指针，e2e 也只看 anthropic 卡和 Ollama 卡 · 证据：突变 R5（provider-routes.ts `menuRow` 的条件加 `|| definition.wire === 'openai-chat'`）相关 434 例与全量 6233 例都绿，全量只红基线上同样红的 6 例 · 已修 8bd3ba3：model-selection.test.ts「claude-5-5-models 验收 16」加智谱四行写死的 `family` 与 `familyNameKey`；本轮复核 R5 原样、只丢 `glm-flashx`、只丢 `glm-4.6` 都变红；anthropic 主列表四行一起丢键由 provider-routes.test.ts「复现 claude-5-5-models 验收 16」的 Opus 5.5 一例抓到；只丢 haiku 家族时 vitest 全绿，由 CI 的 e2e「验收 17」兜着
+- [建议] log「验收核对 · 2026-11-28」写验收 13 有 19 例，CI 报告里标题点名验收 13 的用例是 10 例（model-families.test.ts 9 例加 definitions.test.ts「验收 1、13」1 例）；19 是把 describe 标题里的「验收 13」按 fullName 也算进去的 18 次再加 1；其余各条与全量 vitest、e2e 的数字都对得上 · 证据：`gh run download 46120326933` 的 vitest.json 按用例标题计数 · 已修 902d979：log 末尾补记改为 10 例，原记录没改；本轮复核 model-families.test.ts 跑出 9 例，加 definitions.test.ts「验收 1、13」1 例，属实
+- [建议] Sonnet 5、Haiku 4.5 的用途句（数据表和开放问题 4 定的「上一代 Sonnet（旧版）」「上一代 Haiku（旧版）」）没有用例钉住值；验收 8 只查键在不在和占位符，验收 9 只看两新行 · 证据：突变 R6 把两份 locale 的这两句改回本 spec 之前的值，相关与全量都绿，e2e 里也没有用例读这两句 · 已修 8bd3ba3：copy-coverage.test.ts 加一例，两份 locale 四句写死，与 spec 数据表一致；本轮复核 R6 原样与只改 en 的 Sonnet 句、只改 en 的 Haiku 句、只改 zh-CN 的 Haiku 句都变红；把 Haiku 4.5、Sonnet 5 行的 `purposeKey` 改指新行的句子，分别由 definitions.test.ts「验收 11」与 model-selection.test.ts「验收 16」抓到
+- [建议] 验收 2「关思考且 tools 非空本地拒绝」只测了 effort high 一种 · 证据：突变 R15（拒绝条件加 `&& req.effort !== undefined`）相关与全量都绿 · 已修 8bd3ba3：thinking-shapes.test.ts 那例改成 low、medium、high 与不传四种都要本地拒绝，原来的 high 一例仍在其中，没有改弱；本轮复核 R15 原样与只放行 low、只放行 medium、只拦 high（不传按 high 算）、两个以上工具才拦都变红；xhigh、max 先被 `assertMayDisable` 拒，走不到这一支
+- [建议] 总参考「以后再说」新加的第一条（Haiku 4.5 公告）写「新开一步」，没写在哪里开：原 plan 写「在这里新开一步」，spec §Haiku 4.5 写「到时在本 spec 的 plan「以后」记一步」，plan 没有这一节，docs/spec-driven-dev.md §6 又说这一节的条目要做先写 spec · 无证据 · 已修 32d5b65：那一行改成「先写一份 lite spec 再改」；本轮复核与 §6「要做哪一条，先写 spec」一致，四段格式不变，spec-check 的 later 不报；与 spec 原句的冲突见下一条
+- [建议] 改写后的总参考那一行与 spec §Haiku 4.5「公告之后」末句相反：spec 写「撤行是表数据改动，不另写 spec，到时在本 spec 的 plan「以后」记一步」，总参考写先写一份 lite spec；§6 规定评审之后 spec 正文不能再改，本 spec 又要改 implemented，两处会一直并存，以后照 spec 做的人会去给已 implemented 的 plan 加步骤 · 无证据 · 已修 231a84a：总参考那一行加写「这一条取代该节末句「到时在本 spec 的 plan「以后」记一步」」，理由写明那份 spec 改 implemented 之后正文不动、plan 不再收步骤，按核心第 4 条要新写 spec；spec 正文不改
+
+- 补记：「审过 902d979」那条记录最后一条建议的处置由「待作者处置」填成「已修 231a84a」（只改总参考「以后再说」一行，评审之后允许，不再复审）。

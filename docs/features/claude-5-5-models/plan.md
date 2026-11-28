@@ -4,8 +4,8 @@
 
 ## 当前 / 需要你
 
-当前：第 0.1、1–14 步做完（第 14 步按 CI 报告逐条核对，trace 不再报本 spec，全量 e2e 全过）。下一步第 15 步：清理，把「上线后跟进」与 Open 挪进「以后再说」，再派评审。
-需要你：① 合 PR #100（删 `.sdd/config.json` 里本 spec 三条已失效的 pairs 已知项）。规则原文：plan 第 13 步「若报 config 里这份 spec 的已知项失效，删它们要改 `.sdd/config.json`（门禁文件），那一处交 owner 合」。顺序：#97 已于 2026-11-28 合入；等 #99 合入再合 #100，先合会让 dev 上 pairs 拦 3 条。改的代价：合一个只删 15 行的门禁文件 PR；不改的代价：这三条留着，以后有人只删掉 01 的 `§Provider 层` 或 02 的 `§对 01-provider-and-tape 的修补` 那一条 `Changed by`，spec-check 不会拦（#99 评审突变 M1b、M1c 存活；删整行照样会拦）。② 2026-10-23 交 owner、还没回的一条建议（log「审过 4550a17」）：docs/spec-driven-dev.md「本项目补充」第 9 条仍写「厂商现状表……本次不创建」，已过时（docs/reference/vendors.md 已建）；改这一节要你点名批准，改的代价是改一行说明，不改的代价是这条说明与仓库现状对不上。
+当前：第 0.1、1–15 步做完；最终独立评审两轮，第二轮（log「审过 902d979」）通过，处置都已填。下一步：第 16 步 owner 验收。
+需要你：① 验收本 spec：同意就说「claude-5-5-models 改 implemented」，我再改 Status 与 Approved。② 2026-10-23 交 owner、还没回的一条建议（log「审过 4550a17」）：docs/spec-driven-dev.md「本项目补充」第 9 条仍写「厂商现状表……本次不创建」，已过时（docs/reference/vendors.md 已建）；改这一节要你点名批准，改的代价是改一行说明，不改的代价是这条说明与仓库现状对不上。
 授权：本 spec 由 Codex 实现的 PR，lead 评审、CI 绿后由 lead 开自动合并；碰门禁文件、涉及花费或安全取舍、改 Status 时仍问 owner · 到本 spec `implemented` 为止 · 「一路推进 (Recommended)」（2026-10-23 问卷，题目「Codex 的 PR 经我评审、CI 绿了之后，我自己开自动合并，还是每个都先问你？」）
 
 ## 开工前读
@@ -134,19 +134,17 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
   - 01、02、model-display-names 页头为本 spec 的每条 `Changes` 各写一条 `Changed by: claude-5-5-models（§<节名>）`，逐条成对；02 那几条的括注点出 §点名 (a)(b)(f)(g) 与 owner 的确认（(g) 是 owner 2026-10-15 经问卷确认，spec `Revisions:` ㊴；(e) 只在 live 失败、owner 确认时补）；01 那条点出 (f)（验收 6 的读法）。custom-vendors 与 presentation-r1 不加（spec `Revisions:` ㉘、㉛，`Related:`）。
   - 跑 `python3 .sdd/spec-check.py`：pairs 拦 0 条。若报 config 里这份 spec 的已知项失效，删它们要改 `.sdd/config.json`（门禁文件），那一处交 owner 合。
 - [x] 14. 对照验收 1–19 逐条核对（2026-11-28 做完：按 PR #99 的 CI 报告，1–11、13–19 都有点名用例且全过，12 见第 12 步 live，全量 e2e 278 过 0 挂；log「验收核对 · 2026-11-28」）（验收 19 按它写的条件），跑 `python3 .sdd/spec-check.py` 确认 trace 不再报本 spec 的验收没有用例点名，跑一次「命令」里的全量 e2e（走 CI 草稿 PR 或 Lima VM，不在 owner 的 Mac 上起窗口），结果记进 log.md。
-- [ ] 15. 清理：临时探针、调试输出、live 记录里不该留的内容；把「上线后跟进」与 Open 挪进总参考「以后再说」或写明已定（要在派评审之前做）；`git status` 干净。
+- [x] 15. 清理：临时探针、调试输出、live 记录里不该留的内容；把「上线后跟进」与 Open 挪进总参考「以后再说」或写明已定（要在派评审之前做）；`git status` 干净。（2026-11-28 做完：本 spec 碰过的 47 个代码文件里没有调试输出、`.only` 或临时标记；live 原始记录在仓库外、核过不含 key；「上线后跟进」三条挪进总参考「以后再说」，Open 写成（无）；`git status` 干净）
 - [ ] 16. owner 验收 → 改 Status
 
 ## 上线后跟进
 
-- 弃用页出现 Haiku 4.5 条目时，按开放问题 5 的定法执行（spec §Haiku 4.5），在这里新开一步，记日期和做法。
-- 开放问题 7 定 A：以后要改 02 H10 的压缩绝对上限（`COMPACT_ABS_CAP`），另写 amend，把 Haiku 5.5 在 100 000 以上按高档计价这件事算进去。
-- 厂商出新一代时：加行只写 `family`、`generation`，`listing` 自动算，旧行自动进「更多模型」；能力、价格与思考数据照本 spec 的做法逐项核一手页面。新一代在 Tenon 加行之前不会被指针选上（spec 非目标）。
+（三条已于 2026-11-28 挪进总参考「以后再说」：Haiku 4.5 弃用公告后的做法、改 `COMPACT_ABS_CAP` 时另写 amend、厂商出新一代时的加行做法。）
 
 ## 交接
 
-- 2026-11-28：第 12、13、14 步做完（PR #97、#99 已合入 dev，第 14 步记录在 log「验收核对 · 2026-11-28」）。PR #100（删失效已知项，门禁文件）等 owner 合。下一步第 15 步：清理临时探针与调试输出，把「上线后跟进」与 Open 挪进总参考「以后再说」（要在派评审之前做），`git status` 干净，然后派独立评审，最后 owner 验收改 Status。
+- 2026-11-28：第 12–15 步做完，PR #97、#99、#100、#102 都已合入 dev；最终评审记录与评审后补的测试（8bd3ba3）随本 spec 最后一个 PR 合入。最终评审两轮：审过 b93481c 不通过（1 条 major，已补测试），审过 902d979 通过。下一步：owner 说「claude-5-5-models 改 implemented」后改 Status（spec 的「开放问题（已定）」一节会让 later 检查报一条警，那一节记的是已定的选法、正文到处引用，保留）。
 
 ## Open
 
-（无。原先交给 `docs/presentation-r1` 分支的三件事随它 2026-10-22 合入失效：它已 `implemented`，第 11 步按第一种情形做。）
+（无）

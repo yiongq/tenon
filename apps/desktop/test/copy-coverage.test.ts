@@ -623,6 +623,13 @@ describe('the banner and the model menu copy', () => {
     expect(problems(expected)).toEqual([])
   })
 
+  it('keeps the purpose sentences open question 4 chose for the two legacy rows — claude-5-5-models 验收 8', () => {
+    expect(lookup('zh-CN', 'model.purpose.sonnet5')).toBe('上一代 Sonnet（旧版）')
+    expect(lookup('zh-CN', 'model.purpose.haiku45')).toBe('上一代 Haiku（旧版）')
+    expect(lookup('en', 'model.purpose.sonnet5')).toBe('Previous Sonnet (legacy)')
+    expect(lookup('en', 'model.purpose.haiku45')).toBe('Previous Haiku (legacy)')
+  })
+
   it('names every Anthropic and Zhipu row (the menu and the chip show a name, not an id) — claude-5-5-models 验收 8', () => {
     // A row without a `nameKey` shows its raw id: right for a hand-typed or local model, a
     // regression for a row we ship.
