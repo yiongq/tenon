@@ -205,3 +205,59 @@
 - [建议] 「档位子菜单触发外发确认再点切换」时 `intent` 是否保持 `effort` 没有断言 · 不修：e2e 已覆盖档位子菜单与 hold 确认两条路径，这条组合路径等第 14 步全量核对时补
 结论：通过
 突变：model-routes.ts 的三个 `intent` 分支与预读各一个，共 4 个，全部变红；renderer 两处 `intent` 改成 `row` 只有新 e2e 能抓，由 CI 首跑
+
+## 实施 · 2026-11-28（第 12 步，官方 key live 冒烟，验收 12）
+
+- owner 2026-11-28 定花费上限 2 美元（「按 2 美元开跑」，spec 修订记录一行）；钥匙串 `tenon-live-anthropic` 由 owner 当天更新，读前已提醒会弹窗。key 只进各条命令的环境，记录里 grep 过没有 `sk-ant`、没有鉴权头。
+- 新加三例（apps/desktop/e2e/live-official-agent.spec.ts 最后一个 describe，标题带「claude-5-5-models 验收 12」，record 模式，不串行）：Sonnet 5.5 选 low 后阈值压缩、Haiku 5.5 默认档阈值压缩，两例都先在任务里 Read 一次；两行各问两次六因数题。`save()` 加了可选的文件名后缀，同一例里两个模型各存一份。
+- 构建：dev `07470ca` 加本分支改动，`pnpm build` 后直接跑 desktop 的 `test:live`。
+- 官方组（「live provider · anthropic official」3 例）：`claude-sonnet-5-5` 3 passed（14.3 s），`claude-haiku-5-5` 3 passed（12.0 s）。
+- 新加三例：3 passed（48.4 s），线上请求全部 200，`captureFailures` 都为空。
+  - Sonnet 5.5 压缩：Read 一轮 2 个请求，选 low 后两轮各 1 个（`output_config.effort: low`），重启后摘要请求 `thinking: { type: 'between_tools' }`、`output_config: { effort: 'high' }`、不带 tools、messages 里有 tool_result，200；Tape 摘要 attempt 快照 `{ thinking: { enabled: false }, effort: 'high' }`，压缩后主请求快照 `effort: 'low'`。
+  - Haiku 5.5 压缩：同样 6 个请求，摘要请求 `{ type: 'disabled' }` 加 high、不带 tools、有 tool_result，200；Tape 快照同上；其余请求是 `adaptive` 加 `summarized`、不带 effort。
+  - 缓存与思考：两行第一个请求 input 4、缓存写 2 146（提示 2 150 > 512），第二个请求缓存读 2 146。思考块：Sonnet 第一问 535 字、第二问没有；Haiku 两问 952、259 字；Haiku 压缩例 Read 那一轮 93 字。全部非空。
+- 用量（每个 attempt，input / output / 缓存读 / 缓存写）：
+  - Sonnet 压缩：4/112/0/4880 · 2/20/4880/133 · 4/10/4880/192 · 4/10/5072/49 · 摘要 4/413/0/1132 · 4/12/0/5350
+  - Haiku 压缩：4/112/0/4880 · 2/21/4880/133 · 4/35/5013/60 · 4/10/5073/76 · 摘要 4/338/0/1133 · 4/12/0/5275
+  - Sonnet 缓存：4/1143/0/2146 · 4/18/2146/1209；Haiku 缓存：4/1211/0/2146 · 4/97/2146/1277
+- 花费：新加三例按 Tape 用量与定义表价格算约 0.06 美元；官方组两次没留 Tape（通过的例子删配置目录），按请求数与提示长度估不到 0.05 美元；合计约 0.1 美元，远低于上限。账单以 Console 为准。
+- 结果回写 docs/reference/vendors.md 七行的「实测结果」与核实日期。原始记录在仓库外 tenon-notes/2026-11-28-c55-live/。
+- 观察：压缩后的主请求缓存读为 0、重写 5 千多 token，是摘要替换了历史前缀，符合预期。
+
+测试改动：apps/desktop/e2e/live-official-agent.spec.ts · official Claude 5.5 rows（三例） · 新 describe 照文件里已有的付费套件加 `test.skip(!ENABLED)`：只有 `TENON_LIVE=1` 且 `TENON_LIVE_OFFICIAL_AGENT=1` 时跑，默认 e2e 与 CI 不收要官方 key、要花钱的用例；不是放宽已有断言
+
+## 评审 · 2026-11-28 · 审过 27826c9
+结论：不通过    评审：派发会话起的独立子 agent，Opus 5.5，新上下文；读评审包、tenon-notes/2026-11-28-c55-live 下四份线上记录、plan 第 12 步与「命令」，在 27826c9 的临时 worktree 里读被测 helper 与 kernel 代码并做突变；没跑 live、没读钥匙串
+突变：出了 24 个（记录回放 21 个：M1–M19，其中 M4、M13 各两份；生产代码 3 个：CM1、CM2、CM5，跑 vitest），首跑存活 9 个（M9、M10、M11、M12、M13×2、M15、M19、CM2）；M11、M12 的一般形式与 M13 的产品侧（CM5）被现有 CI 用例拦住，M19 不受验收约束、算等价；M9 与 CM2 是同一处，和 M10、M13/M15 记为下面三条建议；把突变放到真厂商上跑需付费 live，未跑
+发现：
+- [blocker] spec.md §修订记录 与 docs/reference/vendors.md §修订 新加的两行，出处写成分支名 `feat/claude-5-5-live` · 证据：docs/spec-driven-dev.md §4. 改动两条路「…相关的提交号或 PR 号。同一个提交写不进自己的提交号，所以写已有的相关提交或 `PR #n`」，同文件「现行文档」一节格式相同；违反处是这两行的行末 · 待作者处置
+- [建议] Sonnet 压缩例只从 Tape 读压缩后主请求的 low，线上 `official[1]` 的 `output_config` 没断言 · 证据：存活突变 CM2（anthropic-messages.ts encode 对带 dropThinkingBefore、思考没关的请求不写 output_config），kernel 2805 例全绿、desktop/contracts 只红基线上同样红的 6 例；记录回放 M9 存活 · 不修：只算建议
+- [建议] Sonnet 例没断言摘要前一个请求是 low（重启前 evidence 的结果被丢掉，CI 对应用例查了 attempts[at - 1]） · 证据：记录回放 M10 存活；本次记录 wire[2]、wire[3] 是 low，摘要请求缓存读 0、回放历史里没有思考块，不影响结论 · 不修：只算建议
+- [建议] 思考文本断言在没有思考块时空过，可加「reasoningTokens > 0 的 attempt 消息里有思考块」 · 证据：记录回放 M13、M15 存活；产品侧突变 CM5 被 CI 拦（24 例红） · 不修：只算建议
+- [建议] 缓存例把两个模型放在一个用例的循环里，Sonnet 一失败，Haiku 不跑，和 describe 注释不符 · 无证据 · 不修：只算建议
+- [建议] save() 在用例函数体里写的 info.status 恒为 passed，记录里的 status 不能当通过的证据（已有代码） · 无证据 · 不修：只算建议
+- [建议] 验收 12 第一点（官方组两行各跑一次）没有原始线上记录，vendors.md「官方组 3 例…全部 200」核不了 · 无证据 · 不修：只算建议
+
+## 评审处置 · 2026-11-28（审过 27826c9 那一轮）
+
+- [blocker] 两行修订的出处写成分支名 · 已修 d29ec38：spec.md §修订记录 与 vendors.md §修订 那两行行末改成 `PR #97`。
+- [建议] 线上 `official[1]` 的 effort、摘要前一个请求的 low、没有思考块时空过 · 不修：断言照验收 12 的写法（快照从 Tape 读、「出现思考块时文本非空」、不要求一定思考）；补断言要再付费跑一次 live 才能确认，留给以后改这几例时一并做。
+- [建议] 缓存例两个模型在一个用例里、`save()` 的 status 恒为 passed、官方组没有原始记录 · 不修：本次三例与官方组两行都过了；后两条是已有代码与已有用例的写法。
+
+## 评审 · 2026-11-28 · 审过 a5356d1
+结论：通过    评审：复审，派发会话起的独立子 agent，Opus 5.5，新上下文，没看作者对话；读 log.md「评审 · 2026-11-28 · 审过 27826c9」与「评审处置」两节、`git diff 27826c9 a5356d1` 及逐提交 stat、`gh pr view 97`、docs/spec-driven-dev.md §4 与 §8、sdd references/review.md、spec 验收 12、plan「Open」与第 15 步、apps/desktop/e2e/live-official-agent.spec.ts 的 `save()` 与 Claude 5.5 describe；跑了 spec-check（4 条拦都来自最后一条记录仍是审过 27826c9 的那条）；没跑 live、没读钥匙串或 .env
+突变：本次修复只改了 spec.md、vendors.md 各一行修订和 log.md，没改测试或生产代码，突变不适用
+发现：
+- [blocker] spec.md §修订记录 与 docs/reference/vendors.md §修订 新加的两行，出处写成分支名 `feat/claude-5-5-live` · 证据：docs/spec-driven-dev.md §4. 改动两条路「…相关的提交号或 PR 号。同一个提交写不进自己的提交号，所以写已有的相关提交或 `PR #n`」；违反处是这两行的行末 · 已修 d29ec38，已复审：两行行末现为 `PR #97`，`gh pr view 97` 的 headRefName 是 `feat/claude-5-5-live`、base `dev`、OPEN；spec.md 那行与同节以 `PR #70` 结尾的行同式，vendors.md 那行按「日期、改了什么、为什么、提交号或 PR 号」四段写
+- [建议] Sonnet 压缩例只从 Tape 读压缩后主请求的 low，线上 `official[1]` 的 `output_config` 没断言 · 证据：存活突变 CM2；记录回放 M9 存活 · 不修：断言照验收 12 的写法（快照从 Tape 读）；补断言要再付费跑一次 live 才能确认，留给以后改这几例时一并做（复审核过：验收 12 第二点线上只要求摘要请求，压缩后主请求的 low 写明从 Tape 读，理由属实）
+- [建议] Sonnet 例没断言摘要前一个请求是 low · 证据：记录回放 M10 存活 · 不修：同上（复审核过：验收 12 把「选成 low」写成前置操作，没要求断言摘要前的请求，理由属实）
+- [建议] 思考文本断言在没有思考块时空过 · 证据：记录回放 M13、M15 存活；产品侧突变 CM5 被 CI 拦 · 不修：同上（复审核过：验收 12 第四点原文「回复里出现思考块时文本非空…不要求一定有思考块」，理由属实）
+- [建议] 缓存例把两个模型放在一个用例的循环里，Sonnet 一失败，Haiku 不跑，和 describe 注释不符 · 无证据 · 不修：只算建议
+- [建议] save() 在用例函数体里写的 info.status 恒为 passed，记录里的 status 不能当通过的证据（已有代码） · 无证据 · 不修：只算建议
+- [建议] 验收 12 第一点（官方组两行各跑一次）没有原始线上记录，vendors.md「官方组 3 例…全部 200」核不了 · 无证据 · 不修：只算建议
+- [建议] 上面三条带证据的「不修」没进「以后再说」，也没进 plan「Open」，只在 log.md；plan 第 15 步只把「上线后跟进」与 Open 挪进「以后再说」，到时会漏 · 证据：docs/spec-driven-dev.md §8「默认不修，处置写 `不修：<理由>`，记进「以后再说」」；`git diff 27826c9 a5356d1` 没动 docs/architecture/master-reference.md 与 plan.md，plan「## Open」为「（无…）」 · 已修 616a569：总参考「以后再说」加一行
+
+## 评审处置 · 2026-11-28（审过 a5356d1 那一轮）
+
+- [建议] 三条带证据的「不修」没进「以后再说」 · 已修 616a569：总参考「以后再说」加一行，列出三处可收紧的断言与要付费重跑这一前提。
+- 补记：「审过 a5356d1」那条记录里，blocker 一行处置中夹着的「 · 」改成顿号（spec-check 按「 · 」切段读处置），内容没改；最后一条建议的处置由「待作者处置」填成「已修 616a569」。

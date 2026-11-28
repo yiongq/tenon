@@ -1165,3 +1165,4 @@ Claude Desktop 的概念 → Tenon 的实现：
 - 05 矩阵的门禁列用了 `test:e2e`、`test:macos`，它们只在 `.sdd/config.json` 的 `test_reports` 里、不在 `gates` 里（要不要登记是门禁文件的改动） · owner · 待定，不挡 · 05 plan Open
 - 收起行的状态词（运行中、待批、出错、被拒、被拦）要不要统一一套 · lead · 06 碰同一行时定 · 05 plan Open
 - 两个 worker 都满载时见过几条与改动无关的偶发红（G1-leaf、S4、RC-3、MCP 两条、RC-8、RC-1），单独复跑不红、没留原始输出（观察）；另在 PR #84 的 CI `ci` 作业见过 05 验收 45「concurrent captures and age cleanup keep live parentless trees sound」一次 `ENOTEMPTY rmdir`，本地连跑 5 次全过，尚未定因（观察，auto-tier-hardening plan 的 D 段跟进） · lead · CI 上再红时先从 G1-leaf（大小写改名）和 S4 查，并留该清理用例的原始输出 · 05 第三段第六轮复核；PR #84
+- claude-5-5-models 的 live 用例（apps/desktop/e2e/live-official-agent.spec.ts「official Claude 5.5 rows」）有三处断言可收紧：Sonnet 压缩后主请求线上的 `output_config.effort`、摘要前一个请求是 low、`reasoningTokens > 0` 的回合消息里要有思考块（评审的记录回放 M9、M10、M13、M15 与突变 CM2 存活）；补断言要再付费跑一次 live 才能确认 · lead · 下次改这几例或再跑官方 live 时 · claude-5-5-models log「评审 · 2026-11-28 · 审过 27826c9」

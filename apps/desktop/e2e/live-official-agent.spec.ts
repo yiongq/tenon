@@ -1,5 +1,6 @@
 /**
- * Manual paid product-path acceptance 54. No .env files or keychain reads.
+ * Manual paid product-path acceptance 54, and claude-5-5-models acceptance 12 (the last describe).
+ * No .env files or keychain reads.
  * Requires BOTH TENON_LIVE=1 and TENON_LIVE_OFFICIAL_AGENT=1 plus a process-only official key.
  * Collection wiring is intentionally owned by the lead: default e2e MUST exclude this file.
  * Dependencies: step 33 official-protocol-test-seam and step 30 compaction threshold seam.
@@ -29,6 +30,8 @@ const ENABLED =
 const TURN_MS = 180_000
 const OPUS = 'claude-opus-5-5'
 const SONNET = 'claude-sonnet-5'
+const SONNET_55 = 'claude-sonnet-5-5'
+const HAIKU_55 = 'claude-haiku-5-5'
 const ZHIPU = process.env['TENON_LIVE_ZHIPU_MODEL'] ?? 'glm-5.3-flash'
 const HOST = 'https://api.anthropic.com/v1/messages'
 
@@ -76,6 +79,27 @@ async function choose(page: Page, providerId: string, modelId: string) {
   )
   expect(result).toMatchObject({ ok: true, data: { ok: true } })
 }
+/** Only the thinking level of the session's current row; defaults are left alone (intent 'effort'). */
+async function chooseEffort(page: Page, modelId: string, effort: 'low') {
+  const result = await page.evaluate(
+    async ({ modelId: selectedModel, effort: selectedEffort }) => {
+      const latest = (await window.tenon.invoke('session.latest', { limit: 1 })) as {
+        ok: boolean
+        data: { sessionId: string } | null
+      }
+      if (!latest.ok || latest.data === null) throw new Error('No active persisted session')
+      return window.tenon.invoke('session.selectModel', {
+        sessionId: latest.data.sessionId,
+        providerId: 'anthropic',
+        modelId: selectedModel,
+        effort: selectedEffort,
+        intent: 'effort',
+      })
+    },
+    { modelId, effort },
+  )
+  expect(result).toMatchObject({ ok: true, data: { ok: true } })
+}
 async function evidence(app: ElectronApplication, strict: boolean, journal: OfficialEvidence) {
   const { wire, protocol } = await journal.capture(app)
   const official = wire.filter((request) => request.url === HOST)
@@ -109,7 +133,7 @@ async function evidence(app: ElectronApplication, strict: boolean, journal: Offi
     expect(completedProtocol.every((record) => record.status === 200 && record.complete)).toBe(true)
   return { wire: wire.filter((request) => request.status !== null), protocol: completedProtocol }
 }
-function save(info: TestInfo, journal: OfficialEvidence, userData: string) {
+function save(info: TestInfo, journal: OfficialEvidence, userData: string, suffix = '') {
   let facts: ReturnType<typeof tapeFacts> = []
   try {
     facts = tapeFacts(userData)
@@ -119,7 +143,7 @@ function save(info: TestInfo, journal: OfficialEvidence, userData: string) {
   const dir = process.env['TENON_LIVE_RECORD_DIR'] ?? '/tmp/tenon-official-agent-records'
   mkdirSync(dir, { recursive: true })
   writeFileSync(
-    join(dir, `${info.title.replaceAll(/[^a-zA-Z0-9]+/g, '-')}.json`),
+    join(dir, `${info.title.replaceAll(/[^a-zA-Z0-9]+/g, '-')}${suffix}.json`),
     JSON.stringify(
       {
         date: new Date().toISOString(),
@@ -443,4 +467,162 @@ test.describe('official agent product paths · acceptance 54', () => {
       expect(journal.failures).toEqual([])
     })
   }
+})
+
+/**
+ * claude-5-5-models acceptance 12 (plan step 12). Record mode throughout: strict rewrites `thinking`
+ * into adaptive with `block_binding` (official-protocol-test-seam.ts), which would hide the
+ * `between_tools` and `disabled` the summary request is meant to show. Not serial: one model's
+ * failure must not hide the other's result.
+ */
+test.describe('official Claude 5.5 rows · claude-5-5-models acceptance 12', () => {
+  test.skip(!ENABLED, 'Paid suite requires explicit TENON_LIVE_OFFICIAL_AGENT=1 and TENON_LIVE=1')
+  test.describe.configure({ timeout: 900_000 })
+
+  const COMPACTIONS = [
+    {
+      title: 'Sonnet 5.5 performs actual threshold compaction after choosing low effort',
+      model: SONNET_55,
+      effort: 'low',
+      off: 'between_tools',
+    },
+    {
+      title: 'Haiku 5.5 performs actual threshold compaction at its default effort',
+      model: HAIKU_55,
+      effort: null,
+      off: 'disabled',
+    },
+  ] as const
+
+  for (const { title, model, effort, off } of COMPACTIONS) {
+    test(`${title} · claude-5-5-models 验收 12`, async () => {
+      const info = test.info()
+      const tree = makeFolderTree('official-c55', { 'ws/label.txt': 'C55_READ_VALUE_58' })
+      const userData = makeUserDataDir('official-c55-compaction')
+      seedConfig(userData, { locale: 'en', provider: { id: 'anthropic', modelId: model } })
+      const env = credentials('record')
+      let launch = await launchTenon({ userData, secrets: 'memory', env })
+      const journal = createOfficialEvidence()
+      try {
+        await recordOfficialWire(launch.app)
+        await startTask(launch.app, launch.page, join(tree.real, 'ws'))
+        // One tool round first, so the summary request replays a tool_use / tool_result pair.
+        await send(
+          launch.page,
+          `Use Read exactly once on ${join(tree.real, 'ws', 'label.txt')}. Reply READ_DONE and the exact content. Do not use other tools.`,
+        )
+        await completed(launch.page, 'READ_DONE')
+        await expect(launch.page.getByTestId('assistant-text').last()).toContainText(
+          'C55_READ_VALUE_58',
+        )
+        if (effort !== null) await chooseEffort(launch.page, model, effort)
+        for (const marker of ['FIRST', 'SECOND']) {
+          // oxlint-disable-next-line no-await-in-loop -- each completed turn provides compactable history
+          await send(
+            launch.page,
+            `Remember ${marker}: the project label is ${marker}. Reply only ${marker}_DONE. Do not use tools.`,
+          )
+          // oxlint-disable-next-line no-await-in-loop -- preserve chronological run boundaries
+          await completed(launch.page, `${marker}_DONE`)
+        }
+        await evidence(launch.app, false, journal)
+        expect(await closeWithEvidence(launch.app, journal)).toBe(true)
+        launch = await launchTenon({
+          userData,
+          secrets: 'memory',
+          env: { ...env, TENON_E2E_COMPACTION_THRESHOLD: '1' },
+        })
+        await recordOfficialWire(launch.app)
+        await send(launch.page, 'Reply only COMPACTION_DONE. Do not use tools.')
+        await completed(launch.page, 'COMPACTION_DONE')
+        const last = await evidence(launch.app, false, journal)
+        const official = last.wire.filter((request) => request.url === HOST)
+        expect(official).toHaveLength(2)
+        const summary = official[0]
+        expect(summary?.status).toBe(200)
+        expect(summary?.body?.['model']).toBe(model)
+        expect(summary?.body?.['tools']).toBeUndefined()
+        expect(summary?.body?.['thinking']).toEqual({ type: off })
+        expect(summary?.body?.['output_config']).toMatchObject({ effort: 'high' })
+        expect(JSON.stringify(summary?.body?.['messages'])).toContain('tool_result')
+        const facts = tapeFacts(userData)
+        expect(named(facts, 'compaction/anchor')).toHaveLength(1)
+        const attempts = named(facts, 'provider/attempt_completed')
+        const at = attempts.findIndex((fact) => fact.payload['compaction'] !== undefined)
+        expect(attempts.filter((fact) => fact.payload['compaction'] !== undefined)).toHaveLength(1)
+        expect(attempts[at]?.payload['request']).toMatchObject({
+          thinking: { enabled: false },
+          effort: 'high',
+        })
+        if (effort !== null) expect(attempts[at + 1]?.payload['request']).toMatchObject({ effort })
+      } finally {
+        try {
+          await closeWithEvidence(launch.app, journal)
+        } finally {
+          if (!ownedProcessStopped(launch.app))
+            journal.failures.push(`workspace-retained:${tree.real}`)
+          try {
+            save(info, journal, userData)
+          } finally {
+            if (ownedProcessStopped(launch.app)) tree.dispose()
+          }
+        }
+      }
+      expect(journal.failures).toEqual([])
+    })
+  }
+
+  test('Sonnet 5.5 and Haiku 5.5 record cache reads and thinking text · claude-5-5-models 验收 12', async () => {
+    const info = test.info()
+    const question =
+      'Determine how many positive integers below 500 have exactly six positive divisors, and how many of those are odd. Do not use tools. Reply with the two numbers, then DIVISORS_DONE.'
+    for (const model of [SONNET_55, HAIKU_55]) {
+      const userData = makeUserDataDir(`official-c55-cache-${model}`)
+      seedConfig(userData, { locale: 'en', provider: { id: 'anthropic', modelId: model } })
+      // oxlint-disable-next-line no-await-in-loop -- one Electron at a time
+      const launch = await launchTenon({ userData, secrets: 'memory', env: credentials('record') })
+      const journal = createOfficialEvidence()
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- one Electron at a time
+        await recordOfficialWire(launch.app)
+        for (let turn = 0; turn < 2; turn += 1) {
+          // oxlint-disable-next-line no-await-in-loop -- the second request must follow the first
+          await send(launch.page, question)
+          // oxlint-disable-next-line no-await-in-loop -- the second request must follow the first
+          await completed(launch.page, 'DIVISORS_DONE')
+        }
+        // oxlint-disable-next-line no-await-in-loop -- one Electron at a time
+        const { wire } = await evidence(launch.app, false, journal)
+        expect(wire.filter((request) => request.url === HOST)).toHaveLength(2)
+        const facts = tapeFacts(userData)
+        const usage = named(facts, 'provider/attempt_completed').map(
+          (fact) => fact.payload['usage'] as Record<string, number> | null,
+        )
+        expect(usage).toHaveLength(2)
+        const [first, second] = usage
+        expect(
+          (first?.['inputTokens'] ?? 0) +
+            (first?.['cacheReadTokens'] ?? 0) +
+            (first?.['cacheWriteTokens'] ?? 0),
+        ).toBeGreaterThan(512)
+        expect(first?.['cacheWriteTokens'] ?? 0).toBeGreaterThan(0)
+        expect(second?.['cacheReadTokens'] ?? 0).toBeGreaterThan(0)
+        // Adaptive thinking may skip thinking, so a block is not required; one that comes has text.
+        const thinking = named(facts, 'message/assistant').flatMap((fact) =>
+          (fact.payload['content'] as Array<{ type: string; text?: string }>).filter(
+            (block) => block.type === 'thinking',
+          ),
+        )
+        expect(thinking.every((block) => (block.text ?? '').trim().length > 0)).toBe(true)
+      } finally {
+        try {
+          // oxlint-disable-next-line no-await-in-loop -- one Electron at a time
+          await closeWithEvidence(launch.app, journal)
+        } finally {
+          save(info, journal, userData, `-${model}`)
+        }
+      }
+      expect(journal.failures).toEqual([])
+    }
+  })
 })
