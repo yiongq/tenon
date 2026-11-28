@@ -2,14 +2,14 @@
 
 ## 当前 / 需要你
 
-当前：ready，段一第 2.7 步走查做了一半（PR #101）：场景一 owner 回「三条都对」；场景二、三的 6 条给 owner 看了、还没逐条回答；场景四这次没法看（没配连接器）。记录在 log.md「走查 · 段一」。
-需要你：① 对走查场景二、三的 6 条回一句对或不对（日志在 `/tmp/tenon-walkthrough/profiles/local/personal/logs/main.jsonl`，重启会被清）；② 之后点名合并 PR #101（它改了 `.oxlintrc.json` 与 `scripts/lint-gate.test.mjs`，lint 规则变严，不开自动合并）。
+当前：ready，段一做完（PR #101）：第 2.7 步走查 9 条 owner 都回了「对」（log.md「走查 · 段一」），场景四（连接器日志）留到段二走查补看。等 owner 点名合并 #101，之后开段二。
+需要你：点名合并 PR #101（它改了 `.oxlintrc.json` 与 `scripts/lint-gate.test.mjs`，lint 规则变严，不开自动合并）。
 
 ## 分段
 
 | 段 | 状态 | 这一段做完你能看到什么 | 守哪些验收 | 等 owner 做什么 |
 |---|---|---|---|---|
-| 一 · 报错写进日志 | 未开工 | 开发版里的报错、请求失败、模型请求失败、界面报错都进日志文件夹；里面没有 key；刷屏有上限；启动与退出都留一行；连接器日志只有你能读 | 1–7、13、14、16、17、18 | 批 ready；段末走查 |
+| 一 · 报错写进日志 | 做完，走查通过，等合并 | 开发版里的报错、请求失败、模型请求失败、界面报错都进日志文件夹；里面没有 key；刷屏有上限；启动与退出都留一行；连接器日志只有你能读 | 1–7、13、14、16、17、18 | 批 ready；段末走查 |
 | 二 · 崩溃、启动失败与菜单入口 | 未开工，排在段一之后 | 进程崩了、主进程出错、被强杀之后都留下一行；启动失败有提示框；帮助菜单能打开日志文件夹；没有转储文件 | 8–12、15、19；验收 17 里 SIGTERM 那一支的 e2e 也在这一段补（3.2） | 段末走查（几种场景由 lead 演示） |
 
 ## 步骤
@@ -21,7 +21,7 @@
   - [x] 1.3 owner 定 D19（A）与 D20（A），2026-11-28。
   - [x] 1.4 探针 P1–P3：四轮 CI 跑完（2026-11-28），结论写进 evidence.md，照分支改了 spec；原始输出在私有笔记。
   - [x] 1.5 再跑 spec-check；请 owner 读一页、批 ready。
-- [ ] 2. 段一 · 报错写进日志（守验收 1–7、13、14、16、17、18）
+- [x] 2. 段一 · 报错写进日志（守验收 1–7、13、14、16、17、18）
   - [x] 2.0 实现之前先验 spec 开放问题 1：开发构建里各跑一次有、没有 `unhandledRejection` 监听，记下 stderr 与退出码；按开放问题里写好的分支改 spec（属收紧时直接改并记修订，要改行为就先问 owner）。
   - [x] 2.1 测试的前置：e2e 里读日志的 helper（照 `apps/desktop/e2e/helpers/launch.ts` 里 `configPathIn` 的样子写 `logsDirIn(userData)`）；编码变体由独立脚本先算好，抄进测试当字面量。
   - [x] 2.2 测试作者（新子 agent，只读 spec、evidence 与本 plan，不看实现）按本段的验收写测试：哨兵经真实路径进来（用 `MemorySecrets`、`TENON_SECRETS=memory`，不碰钥匙串），一张 `satisfies Record<LogEvent['event'], …>` 的哨兵表，跨截断点的哨兵，OAuth 分片的哨兵，静态扫描（只有 `log/` 与 `mcp/log-sink.ts` 写 `logs/`；只有 `host/index.ts` new 钥匙串）。验收 3 那张表要有「事先就在内存钥匙串里、只经 `get` 读出」的哨兵、跨 300、500、2000 字截断点的哨兵、互为前缀的两个哨兵，三种写法要注入进去而不只是检查它们找不到。跑一遍确认是红的，单独提交一次只改测试的提交，在 log.md 记一行「测试作者提交：<提交号>」。
@@ -29,7 +29,7 @@
   - [x] 2.4 接线：`index.ts` 的转发器、各模块 `log ?? console.warn` 的回落、`readConfig` 的缺省 log 改成写日志，级别照 `LogLevel` 的含义；`main()` 一开始 `open`，之后注册 `will-quit`；`host/index.ts` 的 `HostSecrets` 包上 `rememberingSecrets`；`provider.ts` 的环境变量回落处登记；`.oxlintrc.json` 给 `apps/desktop/src/main/**` 禁 `console` 与 `process.stderr`，只放过 `log/`。`apps/desktop/test/profile.test.ts` 那条走 `console.warn` 的用例按需改，改了在 log.md 写「测试改动」一行（E2）。
   - [x] 2.5 kernel：`loop/run.ts` 在尝试失败处加一行 `ctx.log`；`mcp/pool.ts` 加 `onSecret`（§对 03 的增补，D19）；desktop 的 `mcp/log-sink.ts` 以 0600 新建，启动时以不跟随链接的方式收紧已有文件。
   - [x] 2.6 段一收尾：`pnpm format:check && pnpm lint && pnpm typecheck`、`pnpm vitest run --maxWorkers=2`、`python3 .sdd/spec-check.py`；新上下文的独立评审分「对照 spec」「安全」「突变」三个视角，StrykerJS 只对改动过的文件跑、只出报告（本项目补充第 5 条）；带证据的问题按细则分类处置，记进 log.md。
-  - [ ] 2.7 带 owner 按场景逐条走查段一（开发版，owner 要求时在他的 Mac 上起）：存错 key 再发消息、正常开关一次看生命周期行；每条明确回答对或不对，记进 log.md。
+  - [x] 2.7 带 owner 按场景逐条走查段一（开发版，owner 要求时在他的 Mac 上起）：存错 key 再发消息、正常开关一次看生命周期行；每条明确回答对或不对，记进 log.md。
 - [ ] 3. 段二 · 崩溃、启动失败与菜单入口（守验收 8–12、15、19）
   - [ ] 3.1 测试的前置：不经 Playwright 的启动方式（照 `apps/desktop/e2e/single-instance.spec.ts` 直接 spawn），验收 10、11、15 要用；Playwright 起的 Electron 自带禁用转储的开关（E7）。
   - [ ] 3.2 测试作者按本段的验收写测试：`child-process-gone` 用假的 EventEmitter，文件头写明它复现了真依赖的哪几条行为；验收 9 用 Playwright 在主进程里替换 `dialog.showErrorBox` 再抛错；验收 11 用假的 dialog、exit 断言顺序，e2e 把 `<profileDir>/mcp` 换成同名文件、直接 spawn、等 `app.startup-failed` 再 SIGKILL；验收 15 先跑正对照；验收 17 的 SIGTERM 在 e2e 里走「srt 还没装监听」那一支，登记之后的那一支由 `registerSandboxSignals` 的单元测试守。跑红、单独提交、log.md 记「测试作者提交」。
@@ -52,7 +52,7 @@
 
 ## 交接
 
-2026-11-28：段一代码、评审与修复都在 `feat/error-logs-seg1`（代码停在 e737d7b，之后只有文档提交），评审记录通过。spec 的 PR #98 已合入 dev。下一步：2.7 带 owner 走查（存错 key 再发消息、正常开关一次看生命周期行；每条明确回答对或不对，记进 log.md）。段二开工的第一步先做 Open 里标「段二第一步」的三件，并删掉临时探针 `apps/desktop/e2e/probe-unhandled-rejection.spec.ts` 与 `helpers/probe-unhandled-rejection-preload.cjs`。
+2026-11-28：段一全部做完，在 PR #101（`feat/error-logs-seg1`）：代码、三轮评审与修复、评审记录（审过 916d8b9，通过）、owner 走查（9 条都对）。owner 当天补定 D21–D26。下一步：owner 点名合并 #101；然后段二，从 Open 里标「段二第一步」的几件开始（先把走查时 lead 定的两条补记进 decisions「agent 自定」），并删掉临时探针 `apps/desktop/e2e/probe-unhandled-rejection.spec.ts` 与 `helpers/probe-unhandled-rejection-preload.cjs`。段二仍是测试作者与实现者分开；ready 之后要加规则或放宽数字，先问 owner 再写。
 
 ## Open
 
