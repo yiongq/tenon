@@ -175,6 +175,14 @@ describe('provider.list for the menu (01 修补 6)', () => {
       'high',
       'max',
     ])
+    // Both vendors' rows carry their family, so both settings cards list the pointers first.
+    for (const [id, family, familyNameKey] of [
+      ['glm-5.3', 'glm', 'model.family.glm'],
+      ['glm-5.3-flash', 'glm-flash', 'model.family.glmflash'],
+      ['glm-5.3-flashx', 'glm-flashx', 'model.family.glmflashx'],
+      ['glm-4.6', 'glm', 'model.family.glm'],
+    ] as const)
+      expect(zhipu.models.find((row) => row.id === id)).toMatchObject({ family, familyNameKey })
     expect(zhipu.models.find((row) => row.id === 'glm-4.6')?.listing).toBe('more')
     expect(zhipu.models.find((row) => row.id === 'glm-4.6')?.effortLevels).toBeUndefined()
     const ollama = entryOf(entries, OLLAMA_PROVIDER_ID)

@@ -464,10 +464,17 @@ describe('claude-5-5-models thinking and sampling', () => {
 
   // oxlint-disable-next-line vitest/expect-expect -- assertions are in expectRefusedLocally
   it('claude-5-5-models 验收 2: between_tools refuses nonempty tools before sending', async () => {
-    await expectRefusedLocally(
-      anthropicDefinition,
-      ask(SONNET_5_5, { thinking: { enabled: false }, effort: 'high', tools: [TOOL] }),
-    )
+    for (const effort of ['low', 'medium', 'high', undefined]) {
+      // oxlint-disable-next-line no-await-in-loop -- fresh fake network for each refusal
+      await expectRefusedLocally(
+        anthropicDefinition,
+        ask(SONNET_5_5, {
+          thinking: { enabled: false },
+          tools: [TOOL],
+          ...(effort === undefined ? {} : { effort }),
+        }),
+      )
+    }
   })
 
   it('claude-5-5-models 验收 2: empty tools permit between_tools; Haiku disabled still permits tools', () => {
