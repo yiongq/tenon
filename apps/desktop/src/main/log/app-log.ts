@@ -27,13 +27,8 @@ import { join } from 'node:path'
 import { joinPath } from '@tenon-app/kernel'
 import type { AbsolutePath } from '@tenon-app/kernel'
 import type { LogEvent, LogLevel } from './events.js'
-import {
-  MIN_SECRET_LENGTH,
-  REDACTED,
-  redactGeneric,
-  secretSpellings,
-  truncateText,
-} from './redact.js'
+import { redactGeneric, truncateText } from './redact.js'
+import { createSecretRegistry } from './registry.js'
 
 /** The folder of the app log inside a profile (the profile is `profileDirFor(userData, …)`). */
 export function logsDirOf(profileDir: AbsolutePath): AbsolutePath {
@@ -97,15 +92,16 @@ const WINDOW_MS = 60_000
 const SOURCE_LIMIT = 60
 const UNCAUGHT_LIMIT = 600
 const MARKER_MAX_BYTES = 4096
-/** Lifecycle lines held to be copied to the top of a new file after a rotation. */
-const CARRY_LIMIT = 50
 const SPILL_CAP = 400
 
 const FILE = 'main.jsonl'
 const MARKER = 'running.json'
 const MARKER_TEMP = 'running.json.tmp'
 
-/** Written in this launch, copied to the top of the file the log turns over to (spec §限量). */
+/**
+ * The five kinds written in this launch whose latest line of each is copied to the top of the file
+ * the log turns over to (spec §限量).
+ */
 const CARRIED = new Set<LogEvent['event']>([
   'app.start',
   'app.unclean-exit',
@@ -114,33 +110,28 @@ const CARRIED = new Set<LogEvent['event']>([
   'sandbox.helpers',
 ])
 
-/** Never held back by the cap on a source (spec §限量). */
-const UNLIMITED = new Set<LogEvent['event']>([
-  'app.start',
-  'app.unclean-exit',
-  'app.startup-failed',
-  'app.quit',
-  'window.shown',
-  'sandbox.posture',
-  'sandbox.helpers',
-  'process.gone',
-  'log.dropped',
-])
-
 /** The six fields every line starts with. */
 const FIXED = new Set(['v', 't', 'level', 'ver', 'pid', 'event'])
 
 const NOFOLLOW = (fsConstants.O_NOFOLLOW as number | undefined) ?? 0
 const NONBLOCK = (fsConstants.O_NONBLOCK as number | undefined) ?? 0
+const DIRECTORY = (fsConstants.O_DIRECTORY as number | undefined) ?? 0
 
 interface Quota {
   readonly source: string
   readonly limit: number
 }
 
-/** Which source an event counts against, or null for the kinds that are never held back. */
+/** What a kind that is not in the switch below would be: a mistake the type checker already caught. */
+function unreachable(_event: never): null {
+  return null
+}
+
+/**
+ * Which source an event counts against, or null for the nine kinds that are never held back (spec
+ * §限量). Every kind is named: one added to `LogEvent` does not compile until it is placed here.
+ */
 function quotaOf(event: LogEvent): Quota | null {
-  if (UNLIMITED.has(event.event)) return null
   switch (event.event) {
     case 'line':
       return { source: event.source, limit: SOURCE_LIMIT }
@@ -150,8 +141,18 @@ function quotaOf(event: LogEvent): Quota | null {
       return { source: 'renderer', limit: SOURCE_LIMIT }
     case 'main.uncaught':
       return { source: 'main.uncaught', limit: UNCAUGHT_LIMIT }
-    default:
+    case 'app.start':
+    case 'app.unclean-exit':
+    case 'app.startup-failed':
+    case 'app.quit':
+    case 'window.shown':
+    case 'sandbox.posture':
+    case 'sandbox.helpers':
+    case 'process.gone':
+    case 'log.dropped':
       return null
+    default:
+      return unreachable(event)
   }
 }
 
@@ -234,14 +235,16 @@ function escapeControl(text: string): string {
   return escaped
 }
 
-/** Whether the text is a JSON document: the check a redacted line must still pass. */
-function isJson(text: string): boolean {
-  try {
-    JSON.parse(text)
-    return true
-  } catch {
-    return false
-  }
+/**
+ * U+0080–U+009F (the C1 controls, NEL among them), U+2028 and U+2029 written as `\uXXXX`: the same
+ * JSON, and no reader that breaks a line at one of them sees one line as two. JSON.stringify already
+ * escapes the characters under U+0020, the quote and the backslash.
+ */
+function escapeSeparators(json: string): string {
+  return json.replace(
+    /[\u0080-\u009f\u2028\u2029]/gu,
+    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  )
 }
 
 /** A line's size on disk, its newline included. */
@@ -275,26 +278,18 @@ export function createAppLog(options: AppLogOptions): AppLog {
   const keep = Math.max(0, options.keep ?? DEFAULT_KEEP)
 
   // ---- redaction -------------------------------------------------------------------------------
-  const secrets = new Set<string>()
-  let spellings: string[] = []
+  const registry = createSecretRegistry()
   let appDirPattern: RegExp | null = null
   let homePattern: RegExp | null = null
 
   const remember = (secret: string): void => {
-    if (typeof secret !== 'string' || secret.length < MIN_SECRET_LENGTH || secrets.has(secret)) {
-      return
-    }
-    secrets.add(secret)
-    const all = new Set(spellings)
-    for (const spelling of secretSpellings(secret)) all.add(spelling)
-    spellings = [...all].toSorted((a, b) => b.length - a.length)
+    registry.add(secret)
   }
 
+  /** One string: the registered values, what an upstream cut left of one, the common formats, the folders. */
   const redact = (text: string): string => {
-    let result = text
-    for (const spelling of spellings) {
-      if (result.includes(spelling)) result = result.split(spelling).join(REDACTED)
-    }
+    let result = registry.replace(text)
+    result = registry.cutTail(result)
     result = redactGeneric(result)
     // The application folder first: a development build's lies inside the home.
     if (appDirPattern !== null) result = result.replace(appDirPattern, '<app>')
@@ -316,8 +311,13 @@ export function createAppLog(options: AppLogOptions): AppLog {
   const drops = new Map<string, number>()
   const buffer: Pending[] = []
   let bufferDropped = 0
-  const carried: string[] = []
+  /** The latest line of each carried kind of this launch, as the event it was written from. */
+  const carried = new Map<LogEvent['event'], Pending>()
   let run: RendererRun | null = null
+  /** Lines given up because the file was full and could not turn over; written once it has. */
+  let rotateDropped = 0
+  /** No new try to turn the file over before this instant (ms since the epoch). */
+  let rotateRetryAt = 0
 
   /** The one word to stderr when the file cannot be written; nothing after it. */
   const report = (why: string): void => {
@@ -338,6 +338,9 @@ export function createAppLog(options: AppLogOptions): AppLog {
     const message = error instanceof Error ? error.message : String(error)
     return code !== null && !message.startsWith(code) ? `${code}: ${message}` : message
   }
+
+  /** The version as every line and the marker carry it: taken out first, then cut to 200. */
+  const versionText = (): string => truncateText(redact(version), 200)
 
   // ---- one line --------------------------------------------------------------------------------
   /** The tree of a value with every string held as a cuttable field, or undefined for what is not data. */
@@ -363,10 +366,11 @@ export function createAppLog(options: AppLogOptions): AppLog {
   }
 
   /**
-   * The line for one event, without its newline: strings redacted and cut to 2000, the whole line
-   * redacted once more, and the longest field halved until it is under 16 KiB.
+   * The line for one event, without its newline, or null when it cannot be made to fit. Each string
+   * is taken out of and cut as a field of its own and the line is put together after that, never
+   * searched whole; the longest field is halved until the line is under 16 KiB.
    */
-  const render = (level: LogLevel, event: LogEvent, time: Date): string => {
+  const build = (level: LogLevel, event: LogEvent, time: Date, copy: boolean): string | null => {
     const fields: Field[] = []
     const rest: { [key: string]: Tree } = {}
     for (const [key, item] of Object.entries(event)) {
@@ -374,19 +378,17 @@ export function createAppLog(options: AppLogOptions): AppLog {
       const tree = treeOf(item, fields, 0)
       if (tree !== undefined) rest[key] = tree
     }
-    const ver = new Field(redact(version))
-    fields.push(ver)
     const record = {
       v: 1,
       t: localTime(time),
       level,
-      ver,
+      ver: versionText(),
       pid: options.pid,
       event: event.event,
       ...rest,
+      ...(copy ? { carried: true } : {}),
     }
-    const finish = (): string => redact(JSON.stringify(record))
-    let line = finish()
+    let line = escapeSeparators(JSON.stringify(record))
     for (let spill = 0; bytesOf(line) > MAX_LINE_BYTES && spill < SPILL_CAP; spill += 1) {
       let longest: Field | null = null
       for (const field of fields) {
@@ -399,19 +401,38 @@ export function createAppLog(options: AppLogOptions): AppLog {
       }
       if (longest === null) break
       longest.keep = Math.floor(longest.kept() / 2)
-      line = finish()
+      line = escapeSeparators(JSON.stringify(record))
     }
-    if (bytesOf(line) <= MAX_LINE_BYTES && isJson(line)) return line
-    // Nothing left to cut, or the redaction cut into the structure: say that and nothing more.
-    return JSON.stringify({
-      v: 1,
-      t: localTime(time),
+    return bytesOf(line) <= MAX_LINE_BYTES ? line : null
+  }
+
+  /**
+   * The line for one event. One that cannot be made to fit is not written as itself but as a
+   * `log.dropped` that names it (count 1, the same level): a reader never takes a cut-down line for
+   * the event.
+   */
+  const render = (level: LogLevel, event: LogEvent, time: Date, copy = false): string => {
+    const line = build(level, event, time, copy)
+    if (line !== null) return line
+    const instead = build(
       level,
-      ver: redact(truncateText(version, 200)),
-      pid: options.pid,
-      event: event.event,
-      dropped: 'the line could not be made small and valid',
-    })
+      { event: 'log.dropped', source: event.event, count: 1 },
+      time,
+      copy,
+    )
+    return (
+      instead ??
+      JSON.stringify({
+        v: 1,
+        t: localTime(time),
+        level,
+        ver: '',
+        pid: options.pid,
+        event: 'log.dropped',
+        source: 'render',
+        count: 1,
+      })
+    )
   }
 
   // ---- the file --------------------------------------------------------------------------------
@@ -449,55 +470,6 @@ export function createAppLog(options: AppLogOptions): AppLog {
     size += writeSync(fd, text)
   }
 
-  /** Main turns over: it becomes `main.1.jsonl`, the older ones move up, the oldest goes. */
-  const rotate = (): void => {
-    const dir = folder
-    if (dir === null) return
-    closeSync(fd)
-    fd = -1
-    try {
-      if (keep > 0) {
-        unlinkQuietly(join(dir, `main.${keep}.jsonl`))
-        for (let index = keep - 1; index >= 1; index -= 1) {
-          try {
-            renameSync(join(dir, `main.${index}.jsonl`), join(dir, `main.${index + 1}.jsonl`))
-          } catch (error) {
-            if (codeOf(error) !== 'ENOENT') throw error
-          }
-        }
-        renameSync(join(dir, FILE), join(dir, 'main.1.jsonl'))
-      } else {
-        unlinkSync(join(dir, FILE))
-      }
-    } catch (error) {
-      report(reason(error))
-    }
-    // Whether or not the moves went through, the log goes on in a file of its own.
-    const opened = openMain(join(dir, FILE))
-    fd = opened.fd
-    size = opened.size
-    for (const line of carried) {
-      const copy = redact(`${line.slice(0, -1)},"carried":true}`)
-      if (isJson(copy)) writeOut(`${copy}\n`)
-    }
-  }
-
-  const append = (line: string): void => {
-    try {
-      if (fd < 0) {
-        // An earlier turn-over or open failed: try the file again before giving the line up.
-        if (folder === null) return
-        const opened = openMain(join(folder, FILE))
-        fd = opened.fd
-        size = opened.size
-      }
-      if (size > 0 && size + bytesOf(line) > maxBytes) rotate()
-      writeOut(`${line}\n`)
-    } catch (error) {
-      report(reason(error))
-    }
-  }
-
   const mirror = (line: string): void => {
     if (packaged) return
     try {
@@ -514,23 +486,100 @@ export function createAppLog(options: AppLogOptions): AppLog {
     }
   }
 
+  /** The line that says how many were given up while the file could not turn over. */
+  const rotateNote = (time: Date): string => {
+    const count = rotateDropped
+    rotateDropped = 0
+    return render('warn', { event: 'log.dropped', source: 'rotate', count }, time)
+  }
+
+  /**
+   * Main turns over: it becomes `main.1.jsonl`, the older ones move up, the oldest goes (a rename
+   * onto it). False when that cannot be done, or not yet: the file that is full stays the open one
+   * and nothing is written to it; a try that failed is not made again for a minute.
+   */
+  const turnOver = (time: Date): boolean => {
+    const dir = folder
+    if (dir === null || time.getTime() < rotateRetryAt) return false
+    try {
+      if (keep > 0) {
+        for (let index = keep - 1; index >= 1; index -= 1) {
+          try {
+            renameSync(join(dir, `main.${index}.jsonl`), join(dir, `main.${index + 1}.jsonl`))
+          } catch (error) {
+            if (codeOf(error) !== 'ENOENT') throw error
+          }
+        }
+        renameSync(join(dir, FILE), join(dir, 'main.1.jsonl'))
+      } else {
+        unlinkSync(join(dir, FILE))
+      }
+    } catch (error) {
+      rotateRetryAt = time.getTime() + WINDOW_MS
+      report(reason(error))
+      return false
+    }
+    // The full file is out of the way: what opens under its name is a new one.
+    closeSync(fd)
+    fd = -1
+    const opened = openMain(join(dir, FILE))
+    fd = opened.fd
+    size = opened.size
+    for (const entry of carried.values()) {
+      writeOut(`${render(entry.level, entry.event, entry.time, true)}\n`)
+    }
+    if (rotateDropped > 0) {
+      const note = rotateNote(time)
+      mirror(note)
+      writeOut(`${note}\n`)
+    }
+    return true
+  }
+
+  /** True when the line is in the file. */
+  const append = (line: string, time: Date): boolean => {
+    try {
+      if (fd < 0) {
+        // An earlier open or turn-over failed: try the file again before giving the line up.
+        if (folder === null) return false
+        const opened = openMain(join(folder, FILE))
+        fd = opened.fd
+        size = opened.size
+      }
+      if (size > 0 && size + bytesOf(line) > maxBytes && !turnOver(time)) {
+        rotateDropped += 1
+        return false
+      }
+      writeOut(`${line}\n`)
+      return true
+    } catch (error) {
+      report(reason(error))
+      return false
+    }
+  }
+
   // ---- what one event goes through -------------------------------------------------------------
   const produce = (level: LogLevel, event: LogEvent, time: Date): void => {
     // The cap counts what goes into the file; a log that could not be opened has no window to count in.
+    // The terminal of a development build hears of a line the cap holds back all the same.
     const quota = phase === 'open' ? quotaOf(event) : null
     if (quota !== null) {
       const used = counts.get(quota.source) ?? 0
       if (used >= quota.limit) {
         drops.set(quota.source, (drops.get(quota.source) ?? 0) + 1)
+        if (!packaged) mirror(render(level, event, time))
         return
       }
       counts.set(quota.source, used + 1)
     }
     const line = render(level, event, time)
     mirror(line)
-    if (phase === 'open') append(line)
-    if (phase === 'open' && CARRIED.has(event.event) && carried.length < CARRY_LIMIT) {
-      carried.push(line)
+    if (phase !== 'open') return
+    append(line, time)
+    if (CARRIED.has(event.event)) {
+      // The newest comes last: the copies are written in the order of the lines they copy.
+      carried.delete(event.event)
+      carried.set(event.event, { time, level, event })
     }
   }
 
@@ -597,7 +646,11 @@ export function createAppLog(options: AppLogOptions): AppLog {
       else bufferDropped += 1
       return
     }
-    if (phase === 'closed') return
+    if (phase === 'closed') {
+      // Nothing goes to the file any more; the terminal of a development build still hears of it.
+      if (!packaged) mirror(render(level, event, time))
+      return
+    }
     if (phase === 'open') {
       roll(time)
       if (merged(event, time)) return
@@ -685,7 +738,27 @@ export function createAppLog(options: AppLogOptions): AppLog {
     if (st.isSymbolicLink()) throw new Error('the log folder is a symbolic link')
     if (!st.isDirectory()) throw new Error('the log folder is not a folder')
     if (st.uid !== options.uid) throw new Error('the log folder belongs to another user')
-    chmodSync(dir, 0o700)
+    // The mode is changed on the folder that was opened and looked at, not on whatever the path
+    // leads to by the time of the change.
+    let handle: number
+    try {
+      handle = openSync(dir, fsConstants.O_RDONLY | DIRECTORY | NOFOLLOW)
+    } catch (error) {
+      // A folder this user cannot even read (mode 0): the path is all there is to change it by.
+      if (codeOf(error) !== 'EACCES') throw error
+      chmodSync(dir, 0o700)
+      return
+    }
+    try {
+      const held = fstatSync(handle)
+      if (!held.isDirectory() || held.ino !== st.ino || held.dev !== st.dev) {
+        throw new Error('the log folder changed while it was being opened')
+      }
+      if (held.uid !== options.uid) throw new Error('the log folder belongs to another user')
+      fchmodSync(handle, 0o700)
+    } finally {
+      closeSync(handle)
+    }
   }
 
   const failOpen = (why: string): OpenResult => {
@@ -748,7 +821,7 @@ export function createAppLog(options: AppLogOptions): AppLog {
     writeMarker(dir, {
       v: 1,
       startedAt: localTime(started),
-      version: redact(truncateText(q.version, 200)),
+      version: versionText(),
       pid: options.pid,
     })
     // What was written before the file was there, in its order.
@@ -773,6 +846,12 @@ export function createAppLog(options: AppLogOptions): AppLog {
       const time = options.now()
       flushRun(time)
       flushDrops(time)
+      // Lines given up while the file could not turn over: written if it can be written now.
+      if (rotateDropped > 0) {
+        const count = rotateDropped
+        rotateDropped = 0
+        produce('warn', { event: 'log.dropped', source: 'rotate', count }, time)
+      }
       produce('info', { event: 'app.quit' }, time)
     } catch (error) {
       report(reason(error))

@@ -35,9 +35,13 @@ export function secretSpellings(secret: string): string[] {
     base64,
     base64.replace(/=+$/u, ''),
     base64.replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, ''),
-    encodeURIComponent(secret),
     JSON.stringify(secret).slice(1, -1),
   ])
+  try {
+    found.add(encodeURIComponent(secret))
+  } catch {
+    // A lone surrogate has no URL-encoded form; its other spellings still count.
+  }
   return [...found].filter((one) => one.length > 0)
 }
 
