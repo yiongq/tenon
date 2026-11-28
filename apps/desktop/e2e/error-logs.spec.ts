@@ -69,6 +69,12 @@ test('error-logs 验收 17: start comes first, window, posture and helpers all a
       expect(record, record.event).toMatchObject({ v: 1, ver: electronVersion, pid })
       expect(record.t, record.event).toMatch(LOCAL_TIME)
     }
+    // A normal start writes no warn or error line (the sandbox's self-test is stopped on purpose).
+    expect(
+      records
+        .filter((record) => record.level === 'warn' || record.level === 'error')
+        .map((record) => `${record.level} ${record.event} ${String(record['text'] ?? '')}`),
+    ).toEqual([])
     const posture = records.find((record) => record.event === 'sandbox.posture')
     expect(['active', 'degraded', 'unavailable']).toContain(posture?.['state'])
     expect(Array.isArray(posture?.['reasons'])).toBe(true)
