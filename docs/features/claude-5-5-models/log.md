@@ -280,3 +280,18 @@
 - [建议] spec-check 只按节前缀配对、不查「增补」 · 不修：那是 sdd skill 的工具，不在本仓库改；本步 11 对评审已人工核过。
 - [建议] 括注里夹着说明、第二个 § · 已修 b0a3eb2：本 spec 的 `Changes` 括注里的点名不再带 §。01、02 已加的那两行 `Changed by` 没动：implemented 页头已加的行再改会被 frozen 拦（pre-commit 实测），按节前缀照样配上。
 - [建议] §点名 正文还写 `Amended by:`、`Amends:` · 已修 b0a3eb2：改成 `Changed by:`、`Changes:`，修订记录同一行写明。
+
+## 评审 · 2026-11-28 · 审过 0b31954
+结论：不通过    评审：复审，派发会话起的独立子 agent，Opus 5.5，新上下文，没看作者对话；读 log.md「评审 · 2026-11-28 · 审过 38e94bf」与紧跟的「评审处置」、`git diff 38e94bf 0b31954` 与逐提交 stat、`git show c200809`、plan「当前 / 需要你」第 13 步「交接」、docs/spec-driven-dev.md §4 §5 §6 §8 §页头、spec-check.py 的 parse_header、split_entries、parse_ref_entry、chk_pairs、chk_frozen、chk_shape、chk_review、owner_pending；在作者工作区只读地跑 spec-check 与 `--status`，在 c200809、0b31954 两个临时 worktree 里跑突变，跑完已移除；没跑 live、没读钥匙串或 .env、没用 gh
+突变：20 个（删 Changed by、删或改 Changes、并回超长行、改 implemented 正文和页头、`--staged` 下改本分支新加的 Changed by），在 c200809 上首跑存活 2 个：M1e 是 spec-check 的前缀配对边界（上一轮已记建议），M6c 是 range 模式下改本分支新加的 Changed by（相对 dev 仍是新增行，预期；同样改动 `--staged` 被 frozen 拦，M6d、M6e）；在 0b31954 上重跑其中 7 个，M1b、M1c 存活、跳过数 4→5（即那条 major），其余结果同 c200809；另把 c200809 的 config 套到 dev 的文档上，pairs 拦 3 条
+发现：
+- [blocker] 新 `Changes:` 一行 1074 字符，超过 600 字符上限 · 证据：docs/spec-driven-dev.md §5「新增的行不超过 600 个字符（`shape` 会警）」；spec-check 报 shape「claude-5-5-models/spec.md 有 1 个新增行超过 600 字符」 · 已修 b0a3eb2，已复审：四行 336、466、237、55 字符，11 条与 38e94bf 逐条相同（只第 3、4、6、9 条括注「§点名」改成「点名」），pairs 0 拦、frozen 0 拦、超长警消失，01、02、model-display-names 相对 dev 各只多一行 Changed by；突变 M5d 并回一行即复现超长警
+- [major] config 里本 spec 的三条 pairs 已知项已失效，其中两条盖住了本步刚建的成对 · 证据：plan 第 13 步「删它们要改 `.sdd/config.json`（门禁文件），那一处交 owner 合」；突变 M1b、M1c 在 0b31954 上仍存活，已知项跳过数 4→5 · 交 owner：删这三条的提交 c200809 在 PR #100，门禁文件由 owner 合、要在 #99 之后合。已复审：c200809 只删这三条（known 590→587，JSON 合法），在它上面除 review 外没有新拦，M1b、M1c、M1d 都变红；把它套到 dev 的文档上 pairs 拦 3 条，先合会拦属实；合 plan 第 13 步写法，但 plan 没跟着改，见下面的新 blocker
+- [建议] spec-check 只按节前缀配对，也不查「增补」和不标的区别 · 证据：突变 M1e、M2b、M2d、M4a、M4b、M4c 存活 · 不修：那是 sdd skill 的工具，不在本仓库改；本步 11 对评审已人工核过（已复审：理由属实，M1e 在 c200809 上仍存活；没记进「以后再说」或「待回流 skill」，见下面新建议）
+- [建议] `Changed by` 括注里夹着说明、Changes 括注里有第二个 § · 证据：parse_ref_entry 的解析结果 · 已修 b0a3eb2：本 spec 的 Changes 括注里的点名不再带 §；01、02 已加的 Changed by 不动（已复审：第 3、4、6、9 条已去 §；不动 01、02 的理由属实，突变 M6d、M6e 在 `--staged` 下被 frozen 拦，M6c 同样的改动在 range 模式不拦，拦它的只有 pre-commit；第 10 条仍有第二个 §，见下面新建议）
+- [建议] §点名 正文还写着 `Amended by:`，表 (f) 行写着 `Amends:` · 证据：spec.md §点名 首段与 (f) 行原文 · 已修 b0a3eb2：改成 `Changed by:`、`Changes:`（已复审：两处已改，首段「(a)(b)(f)(g) 在 02 那行，(f) 另在 01 那行」对照页头属实；剩下的 `Amends:` 只在 Revisions、§被否决的方案、修订记录里讲历史）
+- [建议] `Replaces:` 的理由删掉后，§替换 02 的表现层条款 没写这条为什么在表现层范围内 · 无证据 · 不修：只算建议
+- [blocker] 交 owner 之后 plan.md 没更新：「需要你」仍是「无」，第 13 步做完说明仍写「本 spec 改成一行 `Changes:`」「`.sdd/config.json` 不用改」，「交接」没提 PR #100 与合并顺序 · 证据：docs/spec-driven-dev.md §8「写「交 owner」时，在对话里和 plan 的「需要你」里写明规则或验收的原文、改的代价和不改的代价」；AGENTS.md 核心第 2 条「停下前重写 plan 的「当前」和「交接」」；`git diff 38e94bf 0b31954` 没动 plan.md，plan.md 最近一次改动是 4388778；`spec-check --status` 的「要你做的」里没有这条 · 待作者处置
+- [建议] 第 10 条 `Changes` 括注仍有第二个 §（「新条款全文见 §替换 02 的表现层条款」），和 plan 第 13 步「每条只带一个 §」字面不符 · 证据：spec.md 页头第 9 行第 10 条，用 split_entries 切出后 § 数为 2；spec-check 只取第一个 §，检查不受影响 · 待作者处置
+- [建议] 不修的前缀配对边界没记进「以后再说」也没记进「待回流 skill」 · 证据：§8「默认不修，处置写 `不修：<理由>`，记进「以后再说」」；§6「想改通用规则时…记成一条「待回流 skill」」；docs/spec-driven-dev.md「### 待回流 skill」仍是「（暂无）」，38e94bf..0b31954 没动 master-reference.md；突变 M1e 存活 · 待作者处置
+- [建议] 修订记录 2026-11-28 第二行前后矛盾：前半「改写成一行 `Changes:`」后半「按目标分四行写」；写「哪一节」的那一段没写 §点名 正文；「「全文见……」不进 `Changes:`」与第 10 条仍带「新条款全文见 §…」不符 · 证据：spec.md §修订记录 该行原文与页头第 9 行 · 待作者处置
