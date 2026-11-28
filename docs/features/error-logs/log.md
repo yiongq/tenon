@@ -3,6 +3,7 @@
 ## 挑刺评审 · 2026-11-28 · 审过 未提交的草稿（基于 fedc419）
 
 - 被审的内容：`docs/features/error-logs/` 的 spec、decisions、evidence、plan，当时只暂存、没有提交号；放进仓库之后在下面补一行「被审内容随 <提交号> 入库」（plan 1.1）。
+- 被审内容随 daae933 入库（三轮评审审的都是这一版之前的草稿，处置后的结果在这个提交里）。
 - 视角：两份，各在新上下文里审。一份看能不能测、范围、和代码对不对得上、owner 读不读得懂；一份看机密与硬规矩，每条 major 带一段可跑的小程序。
 - 原文：`../tenon-notes/2026-11-28-packaging-and-logs/reviews/error-logs-critique-testability.md`、`error-logs-critique-security.md`，小程序在同目录 `error-logs-security/` 下（另记）。
 - 结论：blocker 0；测试视角 major 13、minor 16、建议 4；安全视角 major 7、minor 5、建议 6。两份有重叠，合并处置。

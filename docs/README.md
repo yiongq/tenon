@@ -14,7 +14,9 @@
 - [auto-tier-hardening](features/auto-tier-hardening/spec.md) · implemented · 在开「自动档」（06）之前，给 Tenon 自己的沙箱和权限检查补三道保护，堵住三个会让别人借你的身份执行代码、或把你的数据外带出去的缺口。 · 需要你：本轮无；lead 完成突变实跑核验后交 owner 验收，Status 只由 owner 决定。
 - [claude-5-5-models](features/claude-5-5-models/spec.md) · ready · Claude 5.5 两行与模型目录跟随最新 · 需要你：无
 - [custom-vendors](features/custom-vendors/spec.md) · implemented · 自定义厂商（M6） · 需要你：—
+- [error-logs](features/error-logs/spec.md) · ready · 把 Tenon 今天只打到控制台的报错写进本地日志文件，写之前去掉机密；启动失败时告诉你日志在哪。 · 需要你：说一声要不要现在把两份 spec 提交并开 PR（PR 动了 03、04 的页头，不涉及门禁文件）；另外有空时在终端关…
 - [model-display-names](features/model-display-names/spec.md) · implemented · 模型显示名 · 需要你：—
+- [packaging](features/packaging/spec.md) · draft · 打 tag 时让 CI 打出 Mac 和 Linux 安装包，照用户的方式装上、打开、确认能用，再建一个只有你看得见的草稿发布。 · 需要你：现在不用批。P7 要你在自己的 Mac 上做，按「探针在批 ready 之前跑完」的规矩排在批 ready 之前：趁探…
 - [presentation-r1](features/presentation-r1/spec.md) · implemented · 呈现修订第一轮（presentation-r1） · 需要你：—
 
 ## 被改过的节
@@ -54,10 +56,13 @@
 - 02 §工具调用的收口 的工具结果视图 ← presentation-r1
 - 03 §地址与出网 ← 04
 - 03 §连接器卡 ← auto-tier-hardening
+- 03 §接口 ← error-logs ← packaging
+- 03 §本地 server：进程与环境 ← error-logs
 - 04 §档位计划写进判决 ← 06
 - 04 §告诉模型 ← 06
 - 04 §档位到 srt 配置 ← auto-tier-hardening
 - 04 §已知限制 ← auto-tier-hardening
+- 04 §依赖 ← packaging
 - 05 §给 06 的接口 ← 06
 - 05 §硬链接 ← auto-tier-hardening
 - 05 §已知限制与代价 ← auto-tier-hardening

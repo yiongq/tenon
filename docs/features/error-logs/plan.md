@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：ready（owner 2026-11-28「error-logs 改 ready」）。12 张卡都已定；三轮评审的发现都已处置；探针 P1–P3 全部跑完，结果在 evidence；代码没动，四个文件与 log.md 还没提交。下一步是第 1.1 步（提交、补提交号），然后段一开工。
-需要你：说一声要不要现在把两份 spec 提交并开 PR（PR 动了 03、04 的页头，不涉及门禁文件）；另外有空时在终端关掉探针的草稿 PR #93 并删掉远端分支 probe/packaging。
+当前：ready（owner 2026-11-28「error-logs 改 ready」）。12 张卡都已定；三轮评审的发现都已处置；探针 P1–P3 全部跑完，结果在 evidence；代码没动；文件已提交在分支 `claude/spec-skill-clarity-c6549f`（daae933 起），还没推送、没开 PR。下一步：owner 推送并开 PR；段一等 owner 说先做 06 还是先做这份再开工。
+需要你：① 在终端推送这个分支并开 PR（PR 只有文档，动了 03、04 的页头，不涉及门禁文件）；② 说一声先做 06 还是先做这份；③ 有空时关掉探针的草稿 PR #93 并删掉远端分支 probe/packaging。
 
 ## 分段
 
@@ -15,7 +15,7 @@
 ## 步骤
 
 - [ ] 1. 改 ready 之前
-  - [ ] 1.1 lead 把四个文件与 log.md 放进仓库的那个 PR 里（03 页头的 `Changed by` 起草时已补上 error-logs 的两节）；提交之后在 log.md 那条挑刺评审记录下补一行被审内容所在的提交号；跑 `python3 .sdd/spec-check.py` 与 `python3 .sdd/spec-check.py --index`。这一份不进总参考阶段表（决策卡「agent 自定」）。
+  - [x] 1.1 lead 把四个文件与 log.md 放进仓库的那个 PR 里（03 页头的 `Changed by` 起草时已补上 error-logs 的两节）；提交之后在 log.md 那条挑刺评审记录下补一行被审内容所在的提交号；跑 `python3 .sdd/spec-check.py` 与 `python3 .sdd/spec-check.py --index`。这一份不进总参考阶段表（决策卡「agent 自定」）。
   - [x] 1.2 复审：新上下文核对两份评审每条发现的处置（2026-11-28，结论在 log.md）；按复审改完。
   - [x] 1.2.1 第三轮复查（第二次复审，2026-11-28）：结论与处置记在 log.md；按细则 8 不再起第四轮。
   - [x] 1.3 owner 定 D19（A）与 D20（A），2026-11-28。
@@ -48,7 +48,7 @@
 
 ## 交接
 
-2026-11-28：第二次复审（第三轮）回来，没有 major、11 条 minor 与 4 条建议，都已处置；探针四轮跑完，P1 正对照成立、P3 照现稿；结果都已改进四个文件，log.md 补了第三轮的记录。没写代码，没提交。下一步：lead 自己核对一遍，请 owner 读一页；owner 回「error-logs 改 ready」后改 Status、加 Approved 行，再做 1.1。
+2026-11-28：owner 回「error-logs 改 ready」，Status 已改、Approved 行已加；两份 spec 连同 03、04 页头随 daae933 提交，第 1.1 步做完（log.md 补了提交号，入口页重新生成）。没写代码，没推送。下一步：owner 推送并开 PR；owner 定先做 06 还是这份，定了这份就从第 2.0 步开始（先验 Open 里那一条）。
 
 ## Open
 
