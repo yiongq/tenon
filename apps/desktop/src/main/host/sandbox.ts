@@ -168,6 +168,14 @@ export interface SandboxStartup {
 export interface SandboxStartupRun {
   readonly initialized: Promise<void>
   readonly outcome: Promise<SandboxStartup>
+  /**
+   * The command id the self-test gave srt (random, one per start; absent when there is no
+   * self-test). The self-test writes a place it must not, and the sandbox stopping that is the test
+   * passing: srt reports the stop as a violation under this id, which is expected, so it is not
+   * logged as a violation for no open command. Only this id: any other key, one that merely looks
+   * like it included, is still logged.
+   */
+  readonly selfTestId?: string
 }
 
 /** Your choices under 「权限与网络」, read at every wrap. */
@@ -685,6 +693,8 @@ export class DesktopSandbox implements HostSandbox {
         : Buffer.from(event.encodedCommand, 'base64').toString('utf8')
     const record = key === undefined ? undefined : this.open.get(key)
     if (record === undefined) {
+      // The self-test's own stop is the expected result, not a violation (see `selfTestId`).
+      if (key !== undefined && key === this.startupRun?.selfTestId) return
       // Unattributed, or it came after its wrap settled: the log only (读法 9). srt's store has
       // made the line one tag-free line; the key came over a carrier the sandbox can write, so it
       // is cut to an id's length and quoted.
