@@ -261,3 +261,14 @@
 
 - [建议] 三条带证据的「不修」没进「以后再说」 · 已修 616a569：总参考「以后再说」加一行，列出三处可收紧的断言与要付费重跑这一前提。
 - 补记：「审过 a5356d1」那条记录里，blocker 一行处置中夹着的「 · 」改成顿号（spec-check 按「 · 」切段读处置），内容没改；最后一条建议的处置由「待作者处置」填成「已修 616a569」。
+
+## 评审 · 2026-11-28 · 审过 38e94bf
+结论：不通过    评审：派发会话起的独立子 agent，Opus 5.5，新上下文，没看作者对话；读了评审包、`git diff adee9a7 38e94bf`、spec 页头与 §对 02 的修补、§对 model-display-names 的修补、§替换 02 的表现层条款、§点名、§修订记录，plan 第 13 步，01、02、model-display-names 页头和被指的节标题，docs/spec-driven-dev.md §4、§5、§8、§页头、§入口页、§逐条替换、§本项目补充，spec-check.py 的 parse_ref_entry、split_entries、sec_compat、chk_pairs、chk_frozen、chk_index 与已知项匹配，config.json 的 modules 与 known；在作者工作区只读地跑了 spec-check
+突变：16 个（删 Changed by、改 Changes 的节、改 implemented 正文和页头、改 kind 标记），在 38e94bf 的临时 worktree 里跑，跑完已移除；首跑存活 8 个：M1b、M1c 追到失效的已知项，删掉已知项后 M1b 变红，记为 major；M1e、M2b、M2d、M4a–c 是 spec-check 的设计边界，记为建议
+发现：
+- [blocker] 新 `Changes:` 一行 1074 字符，超过 600 字符上限 · 证据：docs/spec-driven-dev.md §5「新增的行不超过 600 个字符（`shape` 会警）」；spec-check 报 shape「claude-5-5-models/spec.md 有 1 个新增行超过 600 字符」，adee9a7 没有这条；plan 第 13 步没要求写成一行；按目标拆成四行（337、341、365、55 字符）后 pairs 0 拦、shape 警消失 · 待作者处置
+- [major] config 里本 spec 的三条 pairs 已知项已失效，其中两条盖住了本步刚建的成对 · 证据：plan 第 13 步「若报 config 里这份 spec 的已知项失效，删它们要改 `.sdd/config.json`（门禁文件），那一处交 owner 合」，而 spec-check 不报失效，作者按字面跳过了清理；突变 M1b（01 删 §Provider 层 的 Changed by）和 M1c（02 删 §对 01-provider-and-tape 的修补 的 Changed by）存活，已知项跳过数 4→5；只删这三条已知项不会多出拦，删掉后 M1b 变红 · 待作者处置
+- [建议] spec-check 只按节前缀配对，也不查「增补」和不标的区别，同节两条 Changes 配一条 Changed by、前缀相容的错节、两边一起改错的节、kind 改错都过 · 证据：突变 M1e、M2b、M2d、M4a、M4b、M4c 存活；本步 11 对已人工核过，没问题 · 待作者处置
+- [建议] `Changed by` 括注里夹着说明，spec-check 解析出「验收标准，第 6 条的读法，§点名 (f」这类节名，只靠前缀匹配才配上；第 3、4、6、9、10 条 Changes 的括注里有第二个 §，和 plan「每条只带一个 §」的字面说法有出入 · 证据：用 parse_ref_entry 解析新加的 Changed by 与 Changes 得到的结果；spec-check 只取第一个 §，眼下不受影响 · 待作者处置
+- [建议] §点名 正文还写着 `Amended by:`，表 (f) 行写着 `Amends:`，本步之后页头已没有这两个键 · 证据：spec.md §点名 首段与 (f) 行原文；spec-check 当别名处理，检查不受影响 · 待作者处置
+- [建议] `Replaces:` 的理由删掉后，§替换 02 的表现层条款 没写这条为什么在表现层范围内 · 无证据 · 不修：只算建议
