@@ -5,7 +5,7 @@
 ## 当前 / 需要你
 
 当前：implemented（2026-11-28 owner「claude-5-5-models 改 implemented」）。第 0.1、1–16 步都做完。
-需要你：2026-10-23 交 owner、还没回的一条建议（log「审过 4550a17」）：docs/spec-driven-dev.md「本项目补充」第 9 条仍写「厂商现状表……本次不创建」，已过时（docs/reference/vendors.md 已建）；改这一节要你点名批准，改的代价是改一行说明，不改的代价是这条说明与仓库现状对不上。
+需要你：无。
 授权：本 spec 由 Codex 实现的 PR，lead 评审、CI 绿后由 lead 开自动合并；碰门禁文件、涉及花费或安全取舍、改 Status 时仍问 owner · 到本 spec `implemented` 为止 · 「一路推进 (Recommended)」（2026-10-23 问卷，题目「Codex 的 PR 经我评审、CI 绿了之后，我自己开自动合并，还是每个都先问你？」）
 
 ## 开工前读

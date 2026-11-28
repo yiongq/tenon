@@ -369,3 +369,6 @@
 ## owner 验收 · 2026-11-28（第 16 步）
 
 - owner 在对话里说「claude-5-5-models 改 implemented」。依据：第 14 步验收核对（CI run 46120326933）、第 12 步 live 实跑、最终评审「审过 902d979」通过；#103 合入 dev（`4b09799`）后改 Status。改之前用 #103 head `8f37dc0` 的 CI run 46127268220 三份报告跑 spec-check：trace 0 拦，每条验收都有通过的用例；剩下的警是 spec、plan 篇幅超限与「开放问题（已定）」一节（记的是已定的选法，正文到处引用，保留）。
+
+owner 回复：docs/spec-driven-dev.md「本项目补充」第 9 条已过时 · 「改」（2026-11-28 对话，答「这一节要不要改」）。已改：那一行写明厂商现状表在 `docs/reference/vendors.md`，同一句里同样过时的「overview 另开 PR」一并改成已建。
+owner 回复：config 里本 spec 的三条 pairs 已知项已失效 · 没有原话：owner 2026-11-28 自己合入 PR #100（`6cf1b15`），删掉了这三条。

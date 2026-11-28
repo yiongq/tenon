@@ -12,7 +12,7 @@
 - [05](architecture/05-file-bridge/spec.md) · implemented · agent 改你的文件之前自动留底，一轮任务做完能一键还原；同时补上改文件时的几道保护。 · 需要你：无（2026-11-06 owner「4d 挪阶段 6」，06 单独算预算；下一份是 06 起草）。
 - [06](architecture/06-approval-modes/spec.md) · implemented · 加一个自动档：工作区里能还原的改动、关在沙箱里的命令不再问你；撤不回的、越出文件夹的、按规则拦下的照样问。 · 需要你：无。验收里看到的一处文案（命令行「没法替你撤回」与结算行「可还原」打架）记在总参考「以后再说」，owner 定验收后接…
 - [auto-tier-hardening](features/auto-tier-hardening/spec.md) · implemented · 在开「自动档」（06）之前，给 Tenon 自己的沙箱和权限检查补三道保护，堵住三个会让别人借你的身份执行代码、或把你的数据外带出去的缺口。 · 需要你：本轮无；lead 完成突变实跑核验后交 owner 验收，Status 只由 owner 决定。
-- [claude-5-5-models](features/claude-5-5-models/spec.md) · implemented · Claude 5.5 两行与模型目录跟随最新 · 需要你：2026-10-23 交 owner、还没回的一条建议（log「审过 4550a17」）：docs/spec-driv…
+- [claude-5-5-models](features/claude-5-5-models/spec.md) · implemented · Claude 5.5 两行与模型目录跟随最新 · 需要你：无。
 - [command-undo-copy](features/command-undo-copy/spec.md) · implemented · 命令的审批卡和展开的工具行，按快照的实情说命令的改动能不能还原；能还原时不再写「没法替你撤回」。 · 需要你：无。log 里记了一条观察（还原之后展开行退回「没法替你撤回」那句），要不要排进以后由你提。
 - [custom-vendors](features/custom-vendors/spec.md) · implemented · 自定义厂商（M6） · 需要你：—
 - [error-logs](features/error-logs/spec.md) · ready · 把 Tenon 今天只打到控制台的报错写进本地日志文件，写之前去掉机密；启动失败时告诉你日志在哪。 · 需要你：spec 的 PR #98 评审过、CI 绿后由你合并（或开自动合并）。
