@@ -3,7 +3,7 @@
 ## 当前 / 需要你
 
 当前：ready，段一做完（PR #101）：第 2.7 步走查 9 条 owner 都回了「对」（log.md「走查 · 段一」），场景四（连接器日志）留到段二走查补看。等 owner 点名合并 #101，之后开段二。
-需要你：点名合并 PR #101（它改了 `.oxlintrc.json` 与 `scripts/lint-gate.test.mjs`，lint 规则变严，不开自动合并）。
+需要你：点名合并 PR #101（它改了 `.oxlintrc.json` 与 `scripts/lint-gate.test.mjs`，lint 规则变严，不开自动合并）。段二已在 `feat/error-logs-seg2` 上接着做（从段一分支开出，不等合并）。
 
 ## 分段
 
@@ -31,12 +31,15 @@
   - [x] 2.6 段一收尾：`pnpm format:check && pnpm lint && pnpm typecheck`、`pnpm vitest run --maxWorkers=2`、`python3 .sdd/spec-check.py`；新上下文的独立评审分「对照 spec」「安全」「突变」三个视角，StrykerJS 只对改动过的文件跑、只出报告（本项目补充第 5 条）；带证据的问题按细则分类处置，记进 log.md。
   - [x] 2.7 带 owner 按场景逐条走查段一（开发版，owner 要求时在他的 Mac 上起）：存错 key 再发消息、正常开关一次看生命周期行；每条明确回答对或不对，记进 log.md。
 - [ ] 3. 段二 · 崩溃、启动失败与菜单入口（守验收 8–12、15、19）
+  - [ ] 3.0 段二第一步：把 Open 里标「段二第一步」的几件做掉（先写红的用例再修的照做），删掉临时探针，把走查时 lead 定的两条补记进 decisions「agent 自定」。
   - [ ] 3.1 测试的前置：不经 Playwright 的启动方式（照 `apps/desktop/e2e/single-instance.spec.ts` 直接 spawn），验收 10、11、15 要用；Playwright 起的 Electron 自带禁用转储的开关（E7）。
   - [ ] 3.2 测试作者按本段的验收写测试：`child-process-gone` 用假的 EventEmitter，文件头写明它复现了真依赖的哪几条行为；验收 9 用 Playwright 在主进程里替换 `dialog.showErrorBox` 再抛错；验收 11 用假的 dialog、exit 断言顺序，e2e 把 `<profileDir>/mcp` 换成同名文件、直接 spawn、等 `app.startup-failed` 再 SIGKILL；验收 15 先跑正对照；验收 17 的 SIGTERM 在 e2e 里走「srt 还没装监听」那一支，登记之后的那一支由 `registerSandboxSignals` 的单元测试守。跑红、单独提交、log.md 记「测试作者提交」。
+  - [ ] 3.2.1 走查的端到端用例（owner 2026-11-28「做，段二一起」）：Playwright 起真应用（内存钥匙串、假的模型服务返回 401、不读开发环境的 key），在设置界面里存一把假 key，从输入框发一条消息，断言日志里有那次失败、没有 key、没有消息内容；进 CI 的 e2e。
+  - [ ] 3.2.2 走查报告：同一组 e2e 跑完后生成一页报告（每个场景：截图、日志原始的一行、整理后的样子、逐条检查的 ✓/✗），作为 CI 产物；段一的四个场景与段二的场景都在里面，崩溃与启动失败的提示框用截图。原始的一行放在整理的样子前面。
   - [ ] 3.3 实现者：`watchProcessExits`、`watchUncaught`、`reportStartupFailure`、`openLogsFolder`、菜单。文案进 `apps/desktop/src/i18n/locales/{en,zh-CN}`，过 `pnpm i18n:check` 与 `copy:check`。`menu-template.test.ts` 里开发构建那条（`help.learnMore` 一项）与打包构建那条（没有 Help）、`menu.test.ts` 的对应断言都要改，各在 log.md 写「测试改动」一行。验收 8、9、14、15 照 P1–P3 的结果写好了，不再改。
   - [ ] 3.4 文档同步：`SECURITY.md` 加日志一段；overview 的模块一行与 §信任边界 的「密钥」一句；`docs/ux/components.md` 的「应用菜单」与它的「## 修订」一行。
   - [ ] 3.5 段二收尾：同 2.6。
-  - [ ] 3.6 带 owner 按场景逐条走查段二，每条明确回答对或不对，记进 log.md。lead 演示 owner 自己做不出来的那几样：用 e2e 的启动器在 owner 面前起开发版，调 `forcefullyCrashRenderer` 让窗口崩、在主进程里抛一个没接住的错；在活动监视器里对 Tenon 点「强制退出」再打开；把 `<profileDir>/mcp` 换成同名文件让启动失败（日志照常可写）；在开发者工具的控制台里一分钟打出几千条不同的报错，然后关掉 Tenon，再打开日志给 owner 看那一句丢了多少条（它在窗口过去后的下一次写入或退出时才写）。「打开日志文件夹」由 owner 自己点（验收 19）。真弹框会不会卡住窗口，也在这一步由人看（P2 的效力说明）。
+  - [ ] 3.6 段二走查：owner 不动手，读 3.2.2 的报告（CI 产物，lead 取下来给 owner），每条明确回答对或不对，记进 log.md；段一没看到的场景四（连接器日志只有本人能读）与「开发启动方式下 `ver` 是 Tenon 的版本」也在报告里。只有报告替代不了的才请 owner 亲手做：「帮助 → 打开日志文件夹」点一下（验收 19）。真弹框会不会卡住窗口由 e2e 的截图与用例看，看不出来的写明。
 - [ ] 4. 「以后再说」登记下面这些，每条一行；「渲染层没有错误边界……」那一条原样留着、不动：
   - 崩溃上传到服务器 · owner · 有外部用户之后，阶段 7 · error-logs §给你看的一页「不做」
   - 性能度量（启动打点、内存采样、CI 预算），单开一份小 spec · lead · error-logs implemented 之后 · error-logs §给你看的一页「不做」
