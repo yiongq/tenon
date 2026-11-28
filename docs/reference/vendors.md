@@ -33,4 +33,4 @@
 ## 修订
 
 - 2026-10-23 · 新建，先收 Anthropic：claude-5-5-models 的 F1–F21 逐条对一手页面重核，19 条不变（其中 5 条只改了措辞），F6、F14 因 API 版本 2026-10-21 变了 · claude-5-5-models plan 第 1 步，ADR-004 A12，b1b1577
-- 2026-11-28 · Sonnet 5.5、Haiku 5.5 七行的实测结果与核实日期 · claude-5-5-models plan 第 12 步官方 key live 冒烟 · feat/claude-5-5-live
+- 2026-11-28 · Sonnet 5.5、Haiku 5.5 七行的实测结果与核实日期 · claude-5-5-models plan 第 12 步官方 key live 冒烟 · PR #97
