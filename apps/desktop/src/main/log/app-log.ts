@@ -366,11 +366,16 @@ export function createAppLog(options: AppLogOptions): AppLog {
   }
 
   /**
-   * The line for one event, without its newline, or null when it cannot be made to fit. Each string
-   * is taken out of and cut as a field of its own and the line is put together after that, never
-   * searched whole; the longest field is halved until the line is under 16 KiB.
+   * The line for one event, without its newline, and whether it fits. Each string is taken out of
+   * and cut as a field of its own and the line is put together after that, never searched whole;
+   * the longest field is halved until the line is under 16 KiB.
    */
-  const build = (level: LogLevel, event: LogEvent, time: Date, copy: boolean): string | null => {
+  const build = (
+    level: LogLevel,
+    event: LogEvent,
+    time: Date,
+    copy: boolean,
+  ): { readonly line: string; readonly fits: boolean } => {
     const fields: Field[] = []
     const rest: { [key: string]: Tree } = {}
     for (const [key, item] of Object.entries(event)) {
@@ -403,7 +408,7 @@ export function createAppLog(options: AppLogOptions): AppLog {
       longest.keep = Math.floor(longest.kept() / 2)
       line = escapeSeparators(JSON.stringify(record))
     }
-    return bytesOf(line) <= MAX_LINE_BYTES ? line : null
+    return { line, fits: bytesOf(line) <= MAX_LINE_BYTES }
   }
 
   /**
@@ -412,27 +417,11 @@ export function createAppLog(options: AppLogOptions): AppLog {
    * the event.
    */
   const render = (level: LogLevel, event: LogEvent, time: Date, copy = false): string => {
-    const line = build(level, event, time, copy)
-    if (line !== null) return line
-    const instead = build(
-      level,
-      { event: 'log.dropped', source: event.event, count: 1 },
-      time,
-      copy,
-    )
-    return (
-      instead ??
-      JSON.stringify({
-        v: 1,
-        t: localTime(time),
-        level,
-        ver: '',
-        pid: options.pid,
-        event: 'log.dropped',
-        source: 'render',
-        count: 1,
-      })
-    )
+    const made = build(level, event, time, copy)
+    if (made.fits) return made.line
+    // Only short fields are left in the one that stands in: the name of the event, a count and the
+    // version, which is cut to 200 characters. It always fits.
+    return build(level, { event: 'log.dropped', source: event.event, count: 1 }, time, copy).line
   }
 
   // ---- the file --------------------------------------------------------------------------------
