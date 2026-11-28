@@ -1112,5 +1112,16 @@
       "hardlink": "卡上标过有快照，因为这个文件还有别的名字，这次跳过。",
       "outside-folders": "卡上标过有快照，因为这个路径已不在当前文件夹里，这次跳过。"
     }
+  },
+  "logs": {
+    "startupFailed": {
+      "title": "Tenon 没能启动",
+      "body": "Tenon 没能启动。出了什么问题已经写在它的日志里，日志在这个文件夹：\n\n{folder}",
+      "bodyNoLog": "Tenon 没能启动，日志也没能写下。\n\n错误：{error}"
+    },
+    "openFailed": {
+      "title": "打不开日志文件夹",
+      "body": "Tenon 没能打开日志文件夹。它在这里：\n\n{folder}"
+    }
   }
 }

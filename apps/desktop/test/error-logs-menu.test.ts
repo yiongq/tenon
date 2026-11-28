@@ -127,14 +127,12 @@ describe('error-logs 验收 12: the Help menu', () => {
       helpItems(template).find((item) => item.label === LABEL.en)
 
     // No build kind given: the app's own `isPackaged`, as main calls it.
-    // @ts-expect-error — buildApplicationMenu takes (i18n, onNewChat, packaged) until error-logs segment 2 adds onOpenLogs
     const byDefault = asTemplate(buildApplicationMenu(catalogue.en, () => {}, onOpenLogs))
     click(labelOf(byDefault))
     expect(onOpenLogs).toHaveBeenCalledTimes(1)
 
     for (const packaged of [true, false]) {
       onOpenLogs.mockClear()
-      // @ts-expect-error — same call, with the build kind told
       const told = asTemplate(buildApplicationMenu(catalogue.en, () => {}, onOpenLogs, packaged))
       click(labelOf(told))
       expect(onOpenLogs, `packaged ${packaged}`).toHaveBeenCalledTimes(1)

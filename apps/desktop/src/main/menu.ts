@@ -6,6 +6,7 @@ import { applicationMenuTemplate } from './menu-template.js'
 export function buildApplicationMenu(
   i18n: I18n,
   onNewChat: () => void,
+  onOpenLogs: () => void,
   packaged: boolean = app.isPackaged,
 ): Menu {
   return Menu.buildFromTemplate(
@@ -14,6 +15,7 @@ export function buildApplicationMenu(
       packaged,
       appName: app.name,
       onNewChat,
+      onOpenLogs,
     }),
   )
 }

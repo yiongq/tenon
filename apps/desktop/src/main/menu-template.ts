@@ -7,6 +7,8 @@ export interface MenuOptions {
   readonly packaged: boolean
   readonly appName: string
   readonly onNewChat: () => void
+  /** 「打开日志文件夹」: hands the app log's folder to the system (error-logs 验收 12). */
+  readonly onOpenLogs: () => void
 }
 
 /**
@@ -14,8 +16,8 @@ export interface MenuOptions {
  *
  * A packaged build carries no developer entries: no 「重新加载」 (it throws away the window's state
  * and replays the session from the tape, which a user has no reason to ask for), no 「开发者工具」,
- * and no Help menu while its only entry is a greyed-out placeholder. A development build keeps all
- * three.
+ * and no greyed-out placeholder in Help; its Help holds 「打开日志文件夹」 alone. A development
+ * build keeps all three, and has the placeholder beside the one real entry.
  */
 export function applicationMenuTemplate(
   t: TFunction<'menu'>,
@@ -85,14 +87,13 @@ export function applicationMenuTemplate(
           : []),
       ],
     },
-    ...(packaged
-      ? []
-      : [
-          {
-            label: t('help.title'),
-            role: 'help' as const,
-            submenu: [{ label: t('help.learnMore'), enabled: false }],
-          },
-        ]),
+    {
+      label: t('help.title'),
+      role: 'help',
+      submenu: [
+        { label: t('help.openLogs'), click: () => options.onOpenLogs() },
+        ...(packaged ? [] : [{ label: t('help.learnMore'), enabled: false }]),
+      ],
+    },
   ]
 }

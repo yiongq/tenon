@@ -9,5 +9,4 @@
  * are `any`. When the module lands, tsc reports the directive as unused: delete that directive and
  * nothing else; every call in the tests is annotated by hand, so the real types apply unchanged.
  */
-// @ts-expect-error — log/startup-failure.ts does not exist until error-logs segment 2 is implemented
 export { openLogsFolder, reportStartupFailure } from '../../src/main/log/startup-failure.js'

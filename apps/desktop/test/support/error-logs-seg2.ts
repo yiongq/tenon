@@ -11,5 +11,4 @@
  * directive and nothing else; every call in the tests is annotated by hand, so the real types
  * apply unchanged.
  */
-// @ts-expect-error — log/watch.ts has no watchProcessExits or watchUncaught until error-logs segment 2 is implemented
 export { watchProcessExits, watchUncaught } from '../../src/main/log/watch.js'

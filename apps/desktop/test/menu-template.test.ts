@@ -1,7 +1,7 @@
 /**
  * The application menu of a build users run has no developer entries: no 「重新加载」, no
- * 「开发者工具」 and no greyed-out Help. A development build keeps them (the harness and the
- * developer both use them).
+ * 「开发者工具」 and no greyed-out placeholder in Help (its Help holds 「打开日志文件夹」 alone). A
+ * development build keeps them (the harness and the developer both use them).
  */
 import type { MenuItemConstructorOptions } from 'electron'
 import type { TFunction } from 'i18next'
@@ -11,7 +11,12 @@ import { applicationMenuTemplate } from '../src/main/menu-template.js'
 const t = ((key: string) => key) as unknown as TFunction<'menu'>
 
 function build(options: { isMac: boolean; packaged: boolean }): MenuItemConstructorOptions[] {
-  return applicationMenuTemplate(t, { ...options, appName: 'Tenon', onNewChat: () => {} })
+  return applicationMenuTemplate(t, {
+    ...options,
+    appName: 'Tenon',
+    onNewChat: () => {},
+    onOpenLogs: () => {},
+  })
 }
 
 function submenuOf(
@@ -30,12 +35,15 @@ describe('application menu', () => {
   for (const isMac of [true, false]) {
     const platform = isMac ? 'macOS' : 'other platforms'
 
-    it(`packaged, ${platform}: no Reload, no Toggle Developer Tools, no Help`, () => {
+    it(`packaged, ${platform}: no Reload, no Toggle Developer Tools, Help holds only Open Logs Folder`, () => {
       const template = build({ isMac, packaged: true })
       const view = submenuOf(template, 'view.title')
       expect(roles(view)).toEqual(['togglefullscreen'])
-      expect(template.map((item) => item.label)).not.toContain('help.title')
-      expect(template.some((item) => item.role === 'help')).toBe(false)
+      expect(template.map((item) => item.label)).toContain('help.title')
+      expect(template.some((item) => item.role === 'help')).toBe(true)
+      expect(submenuOf(template, 'help.title').map((item) => [item.label, item.enabled])).toEqual([
+        ['help.openLogs', undefined],
+      ])
       // Nothing a user needs goes with them.
       expect(submenuOf(template, 'file.title').map((item) => item.label)).toContain('file.newChat')
       expect(roles(submenuOf(template, 'edit.title'))).toEqual(
@@ -46,7 +54,7 @@ describe('application menu', () => {
       )
     })
 
-    it(`development, ${platform}: keeps Reload, Toggle Developer Tools and Help`, () => {
+    it(`development, ${platform}: keeps Reload, Toggle Developer Tools and the Learn More placeholder`, () => {
       const template = build({ isMac, packaged: false })
       expect(roles(submenuOf(template, 'view.title'))).toEqual([
         'reload',
@@ -54,7 +62,10 @@ describe('application menu', () => {
         'togglefullscreen',
       ])
       const help = submenuOf(template, 'help.title')
-      expect(help.map((item) => [item.label, item.enabled])).toEqual([['help.learnMore', false]])
+      expect(help.map((item) => [item.label, item.enabled])).toEqual([
+        ['help.openLogs', undefined],
+        ['help.learnMore', false],
+      ])
     })
   }
 

@@ -34,6 +34,7 @@
   },
   "help": {
     "title": "帮助",
+    "openLogs": "打开日志文件夹",
     "learnMore": "了解更多"
   }
 }
