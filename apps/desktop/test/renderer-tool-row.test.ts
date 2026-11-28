@@ -67,6 +67,12 @@ const context = vi.hoisted(() => ({
   snapshotCalls: [] as { callKey: string; snapshotId: string }[],
   snapshotStatus: 'tree' as 'tree' | 'warming' | 'file-only' | 'unavailable',
   canRestore: true,
+  // Another round of the same session, put before or after round-1, when a test sets one.
+  otherRound: null as null | {
+    readonly at: 'before' | 'after'
+    readonly calls: { callKey: string; snapshotId: string }[]
+    readonly canRestore: boolean
+  },
 }))
 vi.mock('react', async (importOriginal) => {
   const actual = await importOriginal<typeof React>()
@@ -85,31 +91,46 @@ vi.mock('../src/renderer/src/runtime/ChatProvider', () => ({
   }),
 }))
 vi.mock('../src/renderer/src/runtime/mcp-store', () => ({ useMcp: () => ({ servers: [] }) }))
-vi.mock('../src/renderer/src/runtime/SnapshotProvider', () => ({
-  useSnapshotRounds: () => ({
-    sessionId: 'session-1',
-    data:
-      context.snapshotCalls.length === 0
-        ? null
-        : {
-            ok: true,
-            status: context.snapshotStatus,
-            rounds: [
-              {
-                roundRunId: 'round-1',
-                runIds: ['round-1'],
-                endMessageId: null,
-                calls: context.snapshotCalls,
-                canRestore: context.canRestore,
-                incompleteCoverage: false,
-                commandsWithoutSnapshot: false,
-              },
-            ],
-            incompleteRestores: [],
-          },
-    refresh: async () => null,
+const snapshotRound = vi.hoisted(
+  () => (id: string, calls: { callKey: string; snapshotId: string }[], canRestore: boolean) => ({
+    roundRunId: id,
+    runIds: [id],
+    endMessageId: null,
+    calls,
+    canRestore,
+    incompleteCoverage: false,
+    commandsWithoutSnapshot: false,
   }),
-}))
+)
+vi.mock('../src/renderer/src/runtime/SnapshotProvider', () => {
+  return {
+    useSnapshotRounds: () => {
+      const own = snapshotRound('round-1', context.snapshotCalls, context.canRestore)
+      const other =
+        context.otherRound === null
+          ? null
+          : snapshotRound('round-2', context.otherRound.calls, context.otherRound.canRestore)
+      return {
+        sessionId: 'session-1',
+        data:
+          context.snapshotCalls.length === 0
+            ? null
+            : {
+                ok: true,
+                status: context.snapshotStatus,
+                rounds:
+                  other === null
+                    ? [own]
+                    : context.otherRound?.at === 'before'
+                      ? [other, own]
+                      : [own, other],
+                incompleteRestores: [],
+              },
+        refresh: async () => null,
+      }
+    },
+  }
+})
 
 let en: I18n
 let zh: I18n
@@ -836,6 +857,23 @@ it('command-undo-copy 验收 3: an expanded Bash row whose round can still be re
       expect(didText(await renderRow(null, 'Bash', {}, i18n, false, bash('unknown')))).toBe(
         copy.old,
       )
+      // Another round of the session, before or after this call's, never decides for this row: an
+      // earlier round cleared or restored while a later one can, and the other way round.
+      for (const at of ['before', 'after'] as const) {
+        for (const own of [false, true]) {
+          context.canRestore = own
+          context.otherRound = {
+            at,
+            calls: [{ callKey: 'other-call', snapshotId: 'snapshot-2' }],
+            canRestore: !own,
+          }
+          // oxlint-disable-next-line no-await-in-loop -- this call's round against the other one
+          expect(didText(await renderRow(null, 'Bash', {}, i18n, false, bash('unknown')))).toBe(
+            own ? copy.restored : copy.old,
+          )
+        }
+      }
+      context.otherRound = null
       context.canRestore = true
       // The row reads its own call and round, not the session's snapshot state now.
       for (const status of ['warming', 'file-only', 'unavailable'] as const) {
@@ -857,5 +895,6 @@ it('command-undo-copy 验收 3: an expanded Bash row whose round can still be re
     context.snapshotCalls = []
     context.snapshotStatus = 'tree'
     context.canRestore = true
+    context.otherRound = null
   }
 })

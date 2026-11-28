@@ -25,3 +25,19 @@ overview：不用改。它只在模块表里泛写 renderer 有「工具行与�
 - [major] 在沙箱外重跑、沙箱不可用的命令卡也出新句 · 已修（同一提交）：两句新文案限定在「任务文件夹里」，撤不回的一串加「文件夹外的」，对这两种卡同样成立（「仅此路径」放行卡上认不出，按卡型排除堵不全）；验收 1 的用例加这两种卡；spec 修订记录一行，decisions.md 加一条自定。
 - [建议] 工具行 Bash 只测 `unknown`、`irreversible` · 不修：只算建议，kernel 只给 Bash 这两个值。
 - [建议] 档位应为 heavy · 不修：owner 批 ready 时认了 standard；本轮修复都是收紧。
+- 补记：上面三条「已修」的修复提交是 74cbae6。
+
+## 评审 · 2026-11-28 · 审过 74cbae6
+结论：不通过    评审：子 agent 新上下文复审（Opus 5.5），读上一轮发现、a6f66a5..74cbae6 修复 diff、作者处置清单、核心细则第 8 条；在临时 worktree（检出 74cbae6）读 spec.md、decisions.md、ToolRow.tsx、tool-row-effect.ts、snapshots.ts、approval-card.ts、restore.ts，跑突变与 spec-check；docs-sync 警告核过：overview.md 不提 toolRowEffect、undoKey，不用跟改
+突变：13 个（复跑上一轮存活的 M10、M14，新出 N1–N11），跑全部 renderer-*.test.ts 加 copy-coverage.test.ts（44 个文件、999 条）；首跑存活 3 个（N6、N8、N9，同一处缺口：取错轮的 canRestore），登记为下面第 4 条，待作者处置；其余 10 个变红
+发现：
+- [major] 快照被清后工具行仍写能还原 · 证据：ToolRow 改传 saved?.canRestore === true；snapshots.ts 的 callSnapshot 返回调用所在那一轮的 canRestore，restore.ts 的 canRestore 为 snapshotsAlive && hasChanges；新用例「有快照号、canRestore 为 false → 旧句」在；M10（改回 saved !== null）红在验收 3；decisions.md 自定第 3 条已改写 · 已修 74cbae6
+- [major] 验收 3 测试空心（M10、M14 存活） · 证据：M10、M14 现都红在 renderer-tool-row.test.ts 验收 3；N1（另加 status === 'tree'）、N2（canRestore !== false）、N3（只看 rounds[0]、不看本调用的快照号）、N4（tool-row-effect 里 restorable !== false）、N5（callSnapshot 的 canRestore 恒为 true）都红 · 已修 74cbae6
+- [major] 在沙箱外重跑、沙箱不可用的命令卡也出新句 · 证据：两句中英文改为「在任务文件夹里改的…；文件夹外的、联网发出的…撤不回」，与 ③「能读写你能访问的所有文件」不再冲突；验收 1 用例加 reason elevated 与 facts.sandbox unavailable 两种卡（approval-card.ts 判沙箱不可用用的就是 facts['sandbox']）；N7（undoKey 排除这两种卡）红在验收 1；N10、N11（回退中、英文文案）红在验收 1、3、4；只收紧文案，没有新增状态、机制、接口、表或配置项，spec 修订记录有一行 · 已修 74cbae6
+- [major] 验收 3 的「那一轮还能还原」没被钉住，取错轮的 canRestore 能存活 · 证据：N6（snapshots.ts 的 callSnapshot 改取 rounds.at(-1)!.canRestore）、N8（ToolRow 改传 saved !== null && rounds.data?.rounds.at(-1)?.canRestore === true）、N9（改传 saved !== null && rounds.data?.rounds.some((r) => r.canRestore) === true），44 个文件 999 条全绿；renderer-tool-row.test.ts 的快照读模型只有一轮 round-1，renderer-snapshots.test.ts 的 callSnapshot 用例也只给一轮；多轮会话里早一轮快照被清或已还原、最新一轮仍可还原时，这类实现会让早一轮的 Bash 行写「能随这一轮还原」而那一轮结算行没有「可还原」，正是上一轮第 1 条的情形 · 待作者处置
+- [major] decisions.md「owner 原话」里 ready 那条的注记从「agent 自定 5 项没有推翻」改成「6 项」，把 owner 批 ready 之后才改写、新增的两条也算进了 owner 没推翻的范围 · 证据：git show ec4769d:docs/features/command-undo-copy/decisions.md 有 5 条「- 自定」、末行写「5 项」；74cbae6 改写第 3 条、新增第 4 条，同时把末行改成「6 项」；docs/spec-driven-dev.md「agent 自定」那条写明 owner 批 ready 时一并看、可以推翻，这两条 owner 当时没看过；spec.md「要你定的」如实写了「评审之后改了一项、加了一项」，两处对不上 · 待作者处置
+
+## 评审处置 · 2026-11-28（审过 74cbae6 那一轮）
+
+- [major] 取错轮的 canRestore 能存活（N6、N8、N9） · 已修（本条之后的提交，复审核对时补号）：工具行测试的快照读模型加第二轮，可放在这次调用那一轮之前或之后，两轮的 `canRestore` 相反，断言行只跟这次调用那一轮走；作者本地打上 N6、N8、N9，三个都红在验收 3。
+- [major] decisions.md 把 owner 批 ready 时的「5 项」改成了「6 项」 · 已修（同一提交）：那条原话记录改回「5 项」；批 ready 之后改写的第 3 条与新增的第 6 条各标「批 ready 之后改／加，owner 还没看过，已在对话里列出」，在对话里逐条列给 owner。
