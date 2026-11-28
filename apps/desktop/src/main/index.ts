@@ -1,4 +1,7 @@
 import type { AbsolutePath } from '@tenon-app/kernel'
+import { appLog, logsDirOf } from './log/app-log.js'
+import { summarizeError } from './log/redact.js'
+import { logRouteFailures, watchRendererConsole } from './log/watch.js'
 import { createSensitivePathProvider } from './host/sensitive-paths.js'
 // oxlint-disable-next-line import/default -- electron-vite emits this worker factory from the query
 import SchemaThread from './mcp/schema-thread.mjs?nodeWorker'
@@ -13,6 +16,7 @@ import {
   absolutePath,
   createProviderRegistry,
   createSessionService,
+  profileDirFor,
   registerBuiltinProviders,
 } from '@tenon-app/kernel'
 import {
@@ -132,10 +136,14 @@ function createWindow(locale: string, title: string, fresh: boolean): BrowserWin
   nativeTheme.on('updated', paintBackground)
   win.once('closed', () => nativeTheme.off('updated', paintBackground))
 
-  win.on('ready-to-show', () => win.show())
-  win.webContents.on('preload-error', (_event, preloadPath, error) => {
-    console.error('[preload-error]', preloadPath, error.message)
+  win.on('ready-to-show', () => {
+    win.show()
+    appLog.write('info', { event: 'window.shown' })
   })
+  win.webContents.on('preload-error', (_event, preloadPath, error) => {
+    appLog.line('preload', 'error')(`[preload-error] ${preloadPath} ${error.message}`)
+  })
+  watchRendererConsole(win.webContents, appLog)
   void win.loadURL(appUrl())
   return win
 }
@@ -146,11 +154,30 @@ app.on('web-contents-created', (_event, contents) => {
 })
 
 async function main(): Promise<void> {
+  // The app log, before anything that can fail or has something to say (error-logs §怎么写「打开」):
+  // the start is the first line of this launch, written to the buffer ahead of what other code says
+  // before the file is there; `open` writes the note about an unclean last exit in front of it.
+  const userData = app.getPath('userData')
+  appLog.write('info', {
+    event: 'app.start',
+    packaged: app.isPackaged,
+    platform: process.platform,
+    arch: process.arch,
+    userData,
+  })
+  appLog.open(logsDirOf(profileDirFor(absolutePath(userData), LOCAL_USER_ID, LOCAL_TENANT_ID)), {
+    version: app.getVersion(),
+    packaged: app.isPackaged,
+    home: absolutePath(app.getPath('home')),
+    // The folder the app lives in: the resources of an installed Tenon, the package in development.
+    appDir: absolutePath(app.isPackaged ? process.resourcesPath : app.getAppPath()),
+  })
+  app.on('will-quit', () => appLog.close())
   // First, before loadDevEnv: Bash's fallback environment is the one Tenon was started with, never
   // `.env.local` (spec 02 §内置工具与参数「Bash」); so is the origin map seam's (M6 §点名「测试接缝」).
   const startupEnv = snapshotEnv(process.env)
   const devEnv = loadDevEnv()
-  if (devEnv) console.warn('[dev-env] loaded', devEnv)
+  if (devEnv) appLog.line('dev-env', 'info')(`[dev-env] loaded ${devEnv}`)
   await app.whenReady()
   // No web permissions (camera, geolocation, notifications…) but one: the app's own document may
   // write the clipboard, for the failure card's 「复制诊断信息」 (spec 02 §失败卡与结束原因). Reading it
@@ -164,11 +191,14 @@ async function main(): Promise<void> {
     mayWriteClipboard(contents?.getURL() ?? '', permission),
   )
   const host = await createDesktopHost({
-    userDataDir: absolutePath(app.getPath('userData')),
+    userDataDir: absolutePath(userData),
     userId: LOCAL_USER_ID,
     tenantId: LOCAL_TENANT_ID,
     send: broadcast,
-    log: (line) => console.warn(line),
+    log: appLog.line('host', 'warn'),
+    // `sandbox: active …` is the sandbox as it should be: information, same source (error-logs §记什么).
+    info: appLog.line('host', 'info'),
+    unattributedLog: appLog.line('sandbox-unattributed', 'warn'),
     isPackaged: app.isPackaged,
     startupEnv,
   })
@@ -180,7 +210,7 @@ async function main(): Promise<void> {
   const tape = openSessionStore({
     identity: host.identity,
     now: () => host.clock.now(),
-    log: (line) => console.error(line),
+    log: appLog.line('tape', 'error'),
   })
   const builtin = createProviderRegistry()
   registerBuiltinProviders(builtin)
@@ -207,7 +237,7 @@ async function main(): Promise<void> {
     startupEnv,
     home,
     isPackaged: app.isPackaged,
-    log: (line) => console.warn(line),
+    log: appLog.line('shell', 'warn'),
   })
   const schemaValidator = createSchemaWorker({ createWorker: () => SchemaThread({}) })
   const mcp = createDesktopMcp({
@@ -224,11 +254,12 @@ async function main(): Promise<void> {
     startupEnv['ZDOTDIR']?.startsWith('/') ? absolutePath(startupEnv['ZDOTDIR']) : null,
     { xdgConfigHome: startupEnv['XDG_CONFIG_HOME'] ?? null },
   )
+  const workspaceLog = appLog.line('workspace', 'warn')
   const refreshSensitive = (folders: readonly AbsolutePath[]): void => {
     void pathProtection
       .refresh(folders)
       .catch((error: unknown) =>
-        console.warn(
+        workspaceLog(
           '[workspace] sensitive targets refresh failed: ' +
             (error instanceof Error ? error.message : String(error)),
         ),
@@ -253,7 +284,7 @@ async function main(): Promise<void> {
             mcpPool: mcp.pool,
             providers,
             isPackaged: app.isPackaged,
-            log: (line) => console.warn(line),
+            log: appLog.line('provider', 'warn'),
             // Before bindLoop and recover(): a resume's endpointOrigin is the configured host.
             config: startupConfig,
           }),
@@ -266,7 +297,8 @@ async function main(): Promise<void> {
           // A call reaching a request with no result: a thrown bug in development, a repair closure
           // and a log line in the packaged build (spec 02 §崩溃、服务端调用块与兜底).
           onUnansweredCall: app.isPackaged ? 'repair' : 'throw',
-          log: (line) => console.error(line),
+          // The kernel's own lines, and the failed model requests among them (loop/run.ts).
+          log: appLog.line('kernel', 'error'),
         })
   // Clearing and deleting a session, its tool-output folder with it (spec 02 §大响应落盘): its live
   // Run stopped first, and until one completes, the session takes no send and opens no Run.
@@ -282,7 +314,7 @@ async function main(): Promise<void> {
           removeSnapshots: (sessionId) => host.snapshots.removeSession(sessionId),
           // Spec 06 D42: a clear starts a new incarnation; the folder grant for the old one is void.
           onRemoval: (sessionId) => folderGrants.invalidate(sessionId),
-          log: (line) => console.warn(line),
+          log: appLog.line('removal', 'warn'),
         })
   const removing = (sessionId: string): boolean => removal?.removing(sessionId) ?? false
   exposeSessionRemoval(removal, app.isPackaged, process.env)
@@ -296,7 +328,7 @@ async function main(): Promise<void> {
           commandShell,
           sandbox: host.sandbox,
           removing,
-          log: (line) => console.warn(line),
+          log: appLog.line('chat', 'warn'),
         })
   if (sessions !== null && loop !== null) sessions.bindLoop(loop.ports)
   host.snapshots.bindActiveRounds(() => loop?.registry.snapshot() ?? [])
@@ -310,11 +342,13 @@ async function main(): Promise<void> {
   const recovery = startRecovery({
     sessions,
     delayMs: recoveryDelayMs(app.isPackaged, process.env),
-    log: (line) => console.error(line),
+    log: appLog.line('recovery', 'error'),
+    info: appLog.line('recovery', 'info'),
   })
   // Closing a window and quitting (spec 02 §停止与退出): a Run in progress asks first, and the quit
   // runs the six steps — its fifth closes the store (WAL: the last connection to close is what
   // checkpoints the file), after the Runs it aborted have settled.
+  const shutdownLog = appLog.line('shutdown', 'warn')
   const shutdown = createShutdown<BrowserWindow>({
     app,
     dialog,
@@ -324,14 +358,14 @@ async function main(): Promise<void> {
     tape,
     t: (key) => locale.i18n.t(key),
     parent: () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null,
-    log: (line) => console.warn(line),
+    log: shutdownLog,
   })
   // Before the windows close: `quitAndInstall` sends no `before-quit` until they have (there is no
   // auto-update yet; this is where it would stop the Runs).
   try {
     autoUpdater.on('before-quit-for-update', () => shutdown.beforeQuitForUpdate())
   } catch (error) {
-    console.warn(
+    shutdownLog(
       `[shutdown] no autoUpdater: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
@@ -363,12 +397,17 @@ async function main(): Promise<void> {
   // `ipcMain` itself, except in a development build an e2e asked to count or fail routes (e2e-routes.ts).
   // Once the quit's third step ran, a route that opens a Run or writes a fact answers ok: false; so
   // does a send to a session being cleared or deleted.
-  const routes = refuseWhileRemoving(
-    refuseWhileShuttingDown(
-      e2eRouteSeam(ipcMain, app.isPackaged, process.env),
-      () => shutdown.started,
+  // The log's wrapper goes outermost, closest to `registerRoute`: what the other wrappers refuse never
+  // reaches it, and a request that failed in its own handler is one line (error-logs 验收 6).
+  const routes = logRouteFailures(
+    refuseWhileRemoving(
+      refuseWhileShuttingDown(
+        e2eRouteSeam(ipcMain, app.isPackaged, process.env),
+        () => shutdown.started,
+      ),
+      removing,
     ),
-    removing,
+    appLog,
   )
   registerMcpRoutes({
     locale: () => locale.current,
@@ -435,7 +474,7 @@ async function main(): Promise<void> {
     host,
     providers,
     isPackaged: app.isPackaged,
-    log: (line) => console.warn(line),
+    log: appLog.line('provider', 'warn'),
     probes,
   })
   registerCustomVendorRoutes({
@@ -447,14 +486,26 @@ async function main(): Promise<void> {
     // Shutdown step 3: a probe or a model list does not outlive the quit (§探测, §列表与上限).
     signal: shutdown.signal,
     isPackaged: app.isPackaged,
-    log: (line) => console.warn(line),
+    log: appLog.line('custom-vendor', 'warn'),
   })
   registerModelRoutes({ ipcMain: routes, sessions, providers, host, gate: recovery.ready })
 
   const win = startSandboxAfterWindow(openWindow, host.sandbox)
   // start() returns the same run: signal handling observes startup without awaiting it here.
   registerSandboxSignals({ process, app, sandbox: host.sandbox, run: host.sandbox.start() })
-  void host.sandbox.start().outcome.then(() => sandboxRoutes.changed())
+  void host.sandbox.start().outcome.then((outcome) => {
+    // What the sandbox came to, and the helper programs it was given (error-logs §记什么「生命周期」).
+    appLog.write('info', {
+      event: 'sandbox.posture',
+      state: outcome.state,
+      reasons: outcome.reasons.map((one) =>
+        one.detail === null ? one.code : `${one.code}: ${one.detail}`,
+      ),
+    })
+    // The notice goes out whatever the line after it does; the paths are the ones handed to the sandbox.
+    sandboxRoutes.changed()
+    appLog.write('info', { event: 'sandbox.helpers', ...host.sandbox.helpers })
+  })
   win.webContents.on('did-finish-load', () => {
     win.webContents.send(configLocale.channel, { locale: locale.current })
   })
@@ -474,6 +525,9 @@ void startSingleInstance(
   () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0],
   main,
 ).catch((error: unknown) => {
-  console.error('[main] failed to start', error)
+  appLog.write('error', {
+    event: 'app.startup-failed',
+    error: summarizeError(error, appLog.redact),
+  })
   app.exit(1)
 })

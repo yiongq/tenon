@@ -17,6 +17,14 @@ export function configPathIn(userData: string): string {
   return join(userData, 'profiles', 'local', 'personal', 'config.json')
 }
 
+/**
+ * `<userData>/profiles/<userId>/<tenantId>/logs` - the folder of `main.jsonl` and `running.json`,
+ * the app log of docs/features/error-logs (§日志行); the profileDirFor layout, like `configPathIn`.
+ */
+export function logsDirIn(userData: string): string {
+  return join(userData, 'profiles', 'local', 'personal', 'logs')
+}
+
 /** Roots this worker made since the last sweep. Drained by the auto fixture in `test.ts`. */
 const createdRoots: string[] = []
 

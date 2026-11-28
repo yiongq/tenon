@@ -339,11 +339,24 @@ describe('the effective .oxlintrc.json config', () => {
     // Catches: dropping the apps/desktop/src/main override or either of its rules. No main file
     // reads the cwd today, so `pnpm lint` itself stays green without it.
     expect(MAIN_PATHS.flatMap((path) => cwdBanGaps(path))).toEqual([])
+    // dev-env.ts is let go of the cwd ban and of nothing else: it may not write to stderr or stdout
+    // either, by a property, by a name imported from node:process, or through globalThis
+    // (error-logs §一直要成立的规矩 第 1 条 names no exception).
     const devEnv = effectiveConfig('apps/desktop/src/main/dev-env.ts').rules
-    expect({
-      properties: devEnv['no-restricted-properties'],
-      imports: devEnv['no-restricted-imports'],
-    }).toEqual({ properties: 'off', imports: 'off' })
+    const devEnvProperties = devEnv['no-restricted-properties']
+    expect(Array.isArray(devEnvProperties) ? devEnvProperties[0] : devEnvProperties).toBe('error')
+    expect(
+      entriesOf(devEnvProperties)
+        .map((one) => `${one.object}.${one.property}`)
+        .toSorted(),
+    ).toEqual(['globalThis.console', 'globalThis.process', 'process.stderr', 'process.stdout'])
+    const devEnvImports = devEnv['no-restricted-imports']
+    expect(Array.isArray(devEnvImports) ? devEnvImports[0] : devEnvImports).toBe('error')
+    expect(
+      (Array.isArray(devEnvImports) ? (devEnvImports[1]?.paths ?? []) : []).map(
+        (one) => `${one.name}: ${[...(one.importNames ?? [])].toSorted().join(', ')}`,
+      ),
+    ).toEqual(['node:process: default, stderr, stdout', 'process: default, stderr, stdout'])
   })
 })
 
@@ -505,6 +518,105 @@ describe("oxlint on a desktop main probe (spec 04 读法 50: main's cwd)", () =>
       exitCode: 0,
       output: '',
     })
+  })
+})
+
+describe('oxlint on a desktop main probe (error-logs §一直要成立的规矩 第 1 条: only log/ writes the console, stderr and stdout)', () => {
+  const SPELLINGS = [
+    {
+      label: `import { stderr } from 'node:process'`,
+      source: `import { stderr } from 'node:process'\nexport const f = () => stderr\n`,
+      rule: 'no-restricted-imports',
+    },
+    {
+      label: `import { stdout as out } from 'node:process'`,
+      source: `import { stdout as out } from 'node:process'\nexport const f = () => out\n`,
+      rule: 'no-restricted-imports',
+    },
+    {
+      label: `import nodeProcess from 'node:process'`,
+      source: `import nodeProcess from 'node:process'\nexport const f = () => nodeProcess\n`,
+      rule: 'no-restricted-imports',
+    },
+    {
+      label: `import * as p from 'node:process'`,
+      source: `import * as p from 'node:process'\nexport const f = () => p\n`,
+      rule: 'no-restricted-imports',
+    },
+    {
+      label: 'process.stderr.write(…)',
+      source: `export const f = () => process.stderr.write('x')\n`,
+      rule: 'no-restricted-properties',
+    },
+    {
+      label: `process['stdout'].write(…)`,
+      source: `export const f = () => process['stdout'].write('x')\n`,
+      rule: 'no-restricted-properties',
+    },
+    {
+      label: 'globalThis.process.stderr.write(…)',
+      source: `export const f = () => globalThis.process.stderr.write('x')\n`,
+      rule: 'no-restricted-properties',
+    },
+    {
+      label: 'globalThis.console.error(…)',
+      source: `export const f = () => globalThis.console.error('x')\n`,
+      rule: 'no-restricted-properties',
+    },
+    {
+      label: 'console.error(…)',
+      source: `export const f = () => console.error('x')\n`,
+      rule: 'no-console',
+    },
+    {
+      label: 'a name for console',
+      source: `const c = console\nexport const f = () => c.error('x')\n`,
+      rule: 'no-restricted-globals',
+    },
+  ]
+  const PROBES_IN = []
+  for (const path of ['apps/desktop/src/main/probe.ts', 'apps/desktop/src/main/dev-env.ts']) {
+    for (const one of SPELLINGS) {
+      PROBES_IN.push({ ...one, label: `${one.label} in ${path.split('/').at(-1)}`, path })
+    }
+  }
+
+  it.each(PROBES_IN)('fails on $label and names the rule', ({ path, source, rule }) => {
+    const { exitCode, output } = lintProbe(path, source)
+    expect({ exitCode, named: output.includes(rule) }, `oxlint said:\n${output}`).toEqual({
+      exitCode: 1,
+      named: true,
+    })
+  })
+
+  it('lets log/ write the console and stderr, under any name', () => {
+    // The other half: the exemption is still there, so the probes above fail for the ban.
+    const source = `const c = console\nexport const f = () => {\n  c.error('x')\n  console.warn('y')\n  process.stderr.write('z')\n}\n`
+    expect(lintProbe('apps/desktop/src/main/log/probe.ts', source)).toEqual({
+      exitCode: 0,
+      output: '',
+    })
+  })
+
+  it('still bans reading the cwd in log/', () => {
+    // log/ has overrides of its own: they must not let go of the cwd ban the main override sets.
+    const { exitCode, output } = lintProbe(
+      'apps/desktop/src/main/log/probe.ts',
+      `import { cwd } from 'node:process'\nexport const f = () => cwd()\n`,
+    )
+    expect({ exitCode, named: output.includes('no-restricted-imports') }).toEqual({
+      exitCode: 1,
+      named: true,
+    })
+  })
+
+  it('lets main import what is not a stream of the process', () => {
+    expect(
+      lintProbe(
+        'apps/desktop/src/main/probe.ts',
+        `import { platform } from 'node:process'\nexport const f = () => platform\n`,
+      ),
+    ).toEqual({ exitCode: 0, output: '' })
   })
 })
 

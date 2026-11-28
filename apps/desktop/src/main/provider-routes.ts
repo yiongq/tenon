@@ -49,6 +49,7 @@ import {
   unboundSecrets,
 } from './provider.js'
 import type { EnvLike } from './provider.js'
+import { appLog } from './log/app-log.js'
 import { selectionOf } from './model-selection.js'
 export { menuSelectionOf, selectionOf } from './model-selection.js'
 import { TEXT_ONLY_PROVIDERS } from './run-assembly.js'
@@ -93,7 +94,7 @@ const SAVED: ProviderWriteResult = { ok: true }
 
 export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
   const { ipcMain, host, providers } = deps
-  const log = deps.log ?? ((line: string): void => console.warn(line))
+  const log = deps.log ?? appLog.line('provider', 'warn')
   const env = (): EnvLike => devEnv({ isPackaged: deps.isPackaged === true, env: deps.env })
 
   registerRoute(ipcMain, providerList, async () => {

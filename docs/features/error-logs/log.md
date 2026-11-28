@@ -81,3 +81,60 @@
   - m1（packaging 1.1 的总参考一行没加）：已加。m2（D18 把卡面写成 owner 点名）：改成照实写。m3（引号里的话不是 owner 原话）：去掉引号。m4（一页没写 60 行上限的两处例外）：补上，记修订。m5（`open -a` 与 `open -n -a` 不一）：统一成 `open -n -a`。m6（几条证据没跟上探针结果）：已更新。m7（「启动是第一行」）：两份 spec 都澄清，error-logs 记修订。m8（验收 17 的 SIGTERM 一支在段二）：分段表里写明。
   - 建议「三轮挑刺评审的标题没绑提交号、第三轮处置没人复核」：段一评审时抽查。其余两条建议知悉，不改。
 - 没发现问题的：owner 批准记录、公开仓库边界、03/04 只改页头、没有行号引用、plan 尾部。
+
+## 实施 · 段一
+
+- 测试作者提交：3e36885（2026-11-28；新子 agent，只读 spec、evidence、plan，没看实现）。
+- 现在就绿的两条：`error-logs-static.test.ts` 的两条静态扫描（今天只有 `mcp/log-sink.ts` 写 `logs/`、只有 `host/index.ts` new 钥匙串）；测试作者先对造出来的违规文件列表确认扫描会报错。它们守的是以后不退步。
+- 测试改动：apps/desktop/test/error-logs-watch.test.ts、apps/desktop/e2e/error-logs.spec.ts · error-logs 验收 14 · 收紧：`repeats` 原先放宽成「0 或 1」「2 或 3」，spec 澄清为第一条 1、补写行是总次数后改成精确值（lead 改，实现之前）。
+- 测试作者指出 spec 说不清的十处：七处已澄清进 spec（修订记录 2026-11-28）；其余三处照测试的理解不改 spec：MCP 日志收紧的入口时机、多行密钥按整段登记、`ErrorSummary` 的 cause 只保证 message 不进。
+- 留给实现者：`test/support/error-logs.ts` 的 5 行与 `pool-on-secret.test.ts` 的 1 行 `@ts-expect-error` 在模块出现后删掉（只删这 6 行不算削弱）。
+- 测试改动：apps/desktop/test/profile.test.ts · 「logs a dropped entry through console.warn when the caller gives no log, without its address」改名为「…through the app log…」 · `readConfig` 不传 log 时的回落按 spec §记什么改成 `appLog.line('config', 'warn')`，不再走 `console.warn`；用例改成 spy `appLog.line`，仍断言恰一行、含 `customVendors[0]`、不含 `secret-host`，另加一句断言来源与级别是 `config`、`warn`（E2、plan 2.4）。
+- 测试改动：scripts/lint-gate.test.mjs · 「still bans reading main's cwd outside dev-env.ts」 · 评审后的修复（安全 m3、对照 spec m1）要求 `dev-env.ts` 的 override 只放开 cwd、不再把 `process.stderr` 的禁令一起关掉，并把 `process.stdout` 也加进禁令；原先断言 dev-env 的 `no-restricted-properties` 是 `'off'`，与此直接冲突。改成：它是 `error`、只禁 `process.stderr` 与 `process.stdout`（不含 cwd），`no-restricted-imports` 仍是 `'off'`——放开的范围没变，禁的范围更大。
+- 实现者提交：5022747、cd87c5b、1a07167（2026-11-28；另一个新子 agent）。删掉 7 行 `@ts-expect-error`（测试作者数成 6 行，实际 7 行；只删指令行）；lead 随后删掉 `test/support/error-logs.ts` 文件头讲这些指令的过期注释，断言没动。
+- 评审后补测试提交：3720511（2026-11-28；又一个新子 agent，只写测试）。14 条复现（12 条先红）、23 个突变缺口逐个验证能杀。
+- 测试改动：apps/desktop/test/error-logs-app-log.test.ts · error-logs 验收 2、16 · 收紧：把「保留数小于总数」「长度不超过上限」这类宽松断言换成精确值（留下的是第 0–999 条、丢弃计数 49000、换窗口时的 `log.dropped` 在 close 之前就在），一条精确断言顶替了几条宽松的，所以删的条数比加的多。
+- 修复者提交：2cab2ec、698f3f0、2f863e0、b9bbff0（2026-11-28；另一个新子 agent）。
+- 探针（plan 2.0）：第一轮（run 46122329302）探针自己加载太早没测到；修好后第二轮（run 46126942154，Linux）：有、没有空的 `unhandledRejection` 监听，退出码都是 0；没监听时 stderr 有两行 `UnhandledPromiseRejectionWarning`，有监听时没有。走「照现稿」那一支，spec 开放问题 1 关掉。
+- 复审（审 f5a1784，原文另记）：不通过，1 blocker、1 major、6 minor、6 建议；上一轮的 major 都已修对。blocker 是「ready 之后四项新增机制没有 owner 点名」，已补问，owner 四项都定了（D21–D24）；其余交下一轮修复。这是第二轮，按细则 8 再有一轮就停。
+- 测试改动：apps/desktop/test/error-logs-registry.test.ts · 文件头与「the table holds 10 000 values…」的用例名、一句注释 · spec 改了（D21，丢最久没用的）：原先的「丢最早登记的」「重复登记不改先后」改成「丢最久没被读到的」「重复登记排到最新」，只改了措辞；该用例的断言原样保留（新规则下仍成立），「重复登记排到最新」另加两条新用例。
+- 测试改动：scripts/lint-gate.test.mjs · 「still bans reading main's cwd outside dev-env.ts」 · 收紧（复审 m3）：dev-env.ts 也不能从 node:process 取 stderr、stdout、默认导出，也不能经 globalThis 写终端。原先断言它的 no-restricted-imports 是 `off`、no-restricted-properties 只有 process.stderr 与 process.stdout；改成断言前者是 error、只禁那三个名字（cwd 仍放开），后者再多 globalThis.console 与 globalThis.process 两项。
+- 第二轮修复的提交：测试 926abb8、040982f（log.md 的测试改动另在 9048ed8）；修复 74b75c9、d21d088、4e6ead4、a1e3a9a（2026-11-28；又一个新子 agent，先交测试再改）。
+- 第三轮复审（审 98aeecd，原文另记）：不通过，0 blocker、1 major、6 minor、6 建议；上一轮各条都已修。major 是登记值查找按「字段长 × 登记值长」退化（4096 字的值加 1 MB 文字卡 7.7 秒）。按细则 8 不再起第四轮；owner 2026-11-28 选「修完，只验这一处 (Recommended)」：修 major 与标了「合并前要改」的几条，再派新 agent 只核对这几处。
+- 第三轮修复的提交：测试 70343d3、a61fcaa；修复 dda3443（2026-11-28；又一个新子 agent，先交测试再改）。没有「测试改动」。实测 4096 字的登记值加 1 MB 文字：修复前 3.6–8.5 秒，修复后 40–100 毫秒。
+- 收尾核对（审 7bae8ed，原文另记）：第三轮的 major 与各条都修对、突变 6 个全红、测试没削弱；但指出「先截到 16 384 字、超长值不登记」是新增机制且放宽了验收 3（超长的 base64 写法会漏出最多 2000 字），还有一种登记值互为开头的形状要 0.94 秒。owner 2026-11-28 定 D25：截到 4096 字、超长的按开头 4096 字登记。
+- 测试改动：apps/desktop/test/error-logs-bounds.test.ts · 「the …(+N) of a field counts the whole text, not what was left after the cut to 16 384…」「复现 the text that redact is given is cut to 16 384 characters first…」「复现 a value of 16 384 characters is registered and one of 16 385 is not」「复现 a value of 1 MB is not registered, and says no more than 2000 characters of itself…」 · spec 改了（D25：上界 4096，超长的按开头 4096 字登记，不再有不登记）：边界从 16 384 / 16 385 改成 4096 / 4097，「超长值不登记」改成「超长值按开头 4096 字登记、照样被换掉」，断言的期望值都跟着改，没有删断言。
+- D25 修复的提交：测试 5547033（log.md 的测试改动在 bbf52d2）；修复 e737d7b（2026-11-28；又一个新子 agent，先交测试再改）。实测：超长写法与 1 MB 登记值修复前各漏出 40–2000 字，修复后 0；4089 个互为开头的值加 1 MB 文字从 0.6–1.3 秒降到 33–62 毫秒。
+
+## 评审 · 2026-11-28 · 审过 916d8b9
+
+结论：通过    评审：段一的独立评审共三轮加一次收尾核对与一次复验，每路都是新上下文的子 agent、只读，报告原文在私有笔记（另记）。第一轮审 53b8165，三路：对照 spec（Opus，不通过，1 major / 8 minor）、安全（Opus，不通过，2 major / 4 minor）、突变（Opus）。第二轮复审审 f5a1784（Opus，不通过，1 blocker / 1 major / 6 minor）。第三轮复审审 98aeecd（Opus，不通过，1 major / 6 minor）；按细则 8 不再起第四轮，owner 选「修完，只验这一处」。收尾核对审 7bae8ed（1 blocker / 3 minor），复验审 32ebb8f（剩 3 条 minor），最后核对只有文档的 916d8b9：没有 blocker 与 major，剩下的 minor 处置见下。每轮修复都是先交只含测试的提交、确认红，再交修复，提交号在「实施 · 段一」。
+突变：四轮合计出了 241 个（111、60、50、6 加复验 14），最后各轮点名的缺口都已有用例杀掉。复验这一轮 14 个：红 9 个，存活 5 个，其中等价 4 个（登记时不截、写法不截、关掉单边快路径、拆边时缓存置空：输出不变，只差内存或速度），缺口 1 个（长于 4096 字的值重复登记时不排到最新、计数会涨，偏安全的方向），登记在 plan 的 Open，段二第一步补用例并修。CI 时限内不登记成能重跑的小块，手跑的表在私有笔记。
+发现：
+- [major] 压缩（compaction）的摘要请求失败不记日志，验收 7 漏了一处（对照 spec） · 证据：探针让摘要请求返回 401，Run 结束而 `attempt failed` 行为 0 · 已修 2cab2ec，复现用例在 `packages/kernel/test/loop/attempt-failed-log.test.ts`
+- [major] 登记值在整行 JSON 上替换，一个长得像日志格式的值能把之后每一行打碎（安全） · 证据：登记 `"level":` 后每行只剩 `dropped` · 已修 698f3f0，按字段脱敏
+- [major] 轮转改名失败后回到已满的文件接着写，上限失效（安全） · 证据：上限 4 KiB 的 `main.jsonl` 长到 326 KB · 已修 698f3f0（另 4e6ead4），owner 定 D22
+- [blocker] ready 之后往 spec 加了四项新增机制，记成了「澄清」，没有 owner 点名（第二轮复审） · 证据：f702e92、5520679 两行修订 · 已修 c851c89（补问 owner，D21–D24 已定并照实改了修订记录）
+- [major] 登记值前 8 个字符相同时查找退化，写一行卡几秒到一分钟（第二轮复审） · 证据：一万个同前缀的值配 2 万字 59 594 ms · 已修 74b75c9，前缀树，7 ms
+- [major] 查找代价是「字段长 × 登记值长」，脱敏之前字段没有长度上限（第三轮复审） · 证据：4096 字的值加 1 MB 界面报错，主进程卡 7.7 秒 · 已修 dda3443（另 e737d7b），owner 定 D25，94 ms
+- [blocker] 「字段先截到 16 384 字、超长值不登记」记成了收紧，实际放宽了验收 3，且让超长的 base64 写法漏出最多 2000 字（收尾核对） · 证据：探针 L2–L5 · 已修 e737d7b（补问 owner，D25），复验 15 种形状与 10 万组模糊都不漏
+- [minor] spec 写的「最坏形状 200 毫秒以内」不成立：每层都分叉的四千多个登记值，一个长字段 210–255 ms，两个长字段的一行 450–580 ms（复验） · 证据：复验的实测表 · 已修 916d8b9（交过 owner，D26 选照实写进已知限制）；`REDACT_INPUT_LIMIT` 上那句不实的注释段二第一步改；「限量挪到脱敏之前」登记进「以后再说」（plan 第 4 步）
+- [minor] 32ebb8f 改了 spec 正文三处措辞，没进修订记录（复验） · 证据：`git diff 7bae8ed 32ebb8f -- docs/features/error-logs/spec.md` · 已修 916d8b9
+- [minor] 长于 4096 字的值重复登记时「排到最新、计数不涨」没有用例，实现也不对（复验的突变 N2） · 证据：存活突变 N2 · 不修：这一段不改，登记在 plan 的 Open，段二第一步先写红的用例再修（偏安全的方向）
+- 其余 minor 与建议（lint 的洞、抄写上限、镜像丢行、行分隔符、登记表上限、计数守恒、`closeSync` 抛错、`write` 抛错、文档归位等二十余条）都已改，逐条的证据与处置在各轮报告里；没改的三条登记如下：OAuth 令牌存进钥匙串之后才登记（要动 kernel `mcp/oauth.ts`，不在本 spec 批准的范围）、`kernel` 来源的行级别混着提示与错误、一个 8 位以上的纯数字登记值落在 `…(+N)` 里时截断标记被吞——都进 plan 第 4 步的「以后再说」。
+- 没发现问题的：kernel 只动了批准的两处；没有新的 IPC 通道；生产代码没有嗅探测试环境；各轮修复都没有削弱测试，`.oxlintrc.json` 禁的范围只增不减。
+- e2e：PR #101 的 CI 上验收 14、17 的三条用例通过（run 46122329302、46126942154、46132337133）。
+- [minor] D26 说要登记「把限量挪到脱敏之前」，plan 第 4 步的清单里还没有（最后核对） · 证据：plan 第 4 步 · 已修 916d8b9 之后的 plan 提交（第 4 步清单加了这一条及另外三条）
+- [建议] spec「一万个开头相同的值…仍在毫秒级」偏松，每层都分叉的形状实测 35–50 ms（最后核对） · 不修：段二文档同步压字数时把这句改成实测的数
+
+## 走查 · 段一 · 2026-11-28
+
+- 怎么起的：owner 说「现在走查」后，在 owner 的 Mac 上直接用 Electron 跑构建产物（`out/main/index.js`），数据目录是全新的临时目录，`TENON_SECRETS=memory`、`TENON_DEV_ENV=off`，不碰钥匙串和平时的数据。
+- 场景一（owner 存一把假 key，发一句「你好」）：日志里有一行 error 级的 `attempt failed`（provider、model、`code=auth status=401`、`retryable=false`、厂商回显的 detail）；搜假 key 的两段 0 处；搜「你好」0 处。owner 回答：「三条都对」。
+- 场景二、三（owner 按 Cmd+Q 退出）：共 8 行，`app.start` 第一行，`sandbox.posture`、`sandbox.helpers`、`window.shown` 都在，`app.quit` 最后一行；退出后 `running.json` 没了；文件夹 0700、文件 0600；没有对话内容。给 owner 列成 6 条并给了自己打开日志的命令；owner 问「在哪看呢」，之后回「继续」——没有逐条回答对或不对，按试点的规矩不算通过，这 6 条记「看过，待明确回答」。
+- 场景四（连接器日志只有本人能读）：临时环境没配连接器，`mcp` 文件夹是空的，这次没看到，只有验收 18 的测试在守。
+- 走查里看到、事先没料到的两处（问了 owner，owner 没有偏好，lead 按推荐定；评审记录之后不能再动 decisions.md，段二开工时补记进「agent 自定」）：① 每次正常启动都有一行 warn 级的沙箱自检被拦（`sandbox-unattributed`），看着像出了问题——段二改成自检按预期被拦时不记警告；② 这种启动方式下 `ver` 与运行标记里的版本是 Electron 的 `44.4.1`——段二走查用正常的开发启动方式确认显示的是 Tenon 的版本。
+- 试点记数：走查时「这不是我以为的」0 次（owner 明确回答的 3 条都对）；lead 自己看到没料到的 2 处；owner 问了 1 次「在哪看」——段二有了「打开日志文件夹」菜单项之后再看这一问还会不会出现。
+- 走查补记（2026-11-28）：owner 自己 `cat` 了日志原文，先说「好像不太一样」——lead 给看的是整理过的表（去掉了 `v`、`ver`、`pid` 和转义的反斜杠），和文件里一行一条 JSON 的样子对不上；对照讲清之后，owner 对场景二、三的 6 条回答：「对」。段一走查的 9 条都有了明确回答，全部是对；场景四留到段二走查补看。
+- 试点记数更新：「这不是我以为的」1 次（展示的样子和真实文件不一样，不是功能不对）。以后走查先给原始的一行，再给整理过的表。
+- 走查方式改了（2026-11-28）：owner「这一步是否能做成回归测试啥的呢 用playwright 我这样去看太累了」，之后回「做，段二一起」。段二起走查由 Playwright 在 CI 跑并出一页报告，owner 只读报告逐条回答（plan 3.2.1、3.2.2、3.6）。

@@ -31,6 +31,7 @@ import type { Config, ProviderRefusal } from '@tenon-app/contracts'
 import { isSubscriptionPath } from './custom-vendors/address.js'
 import { hostOf } from './endpoint.js'
 import { configGeneration, providerSettingsGeneration, readConfig } from './host/profile.js'
+import { appLog } from './log/app-log.js'
 
 /**
  * The environment a dev build falls back to, per provider and per `ConfigKey.name` (spec 01
@@ -192,6 +193,9 @@ export async function readProviderInputs(options: ReadInputsOptions): Promise<Pr
       const stored = await readProviderSecret(host, definition.id, key.name, log)
       if (stored !== null) return { key, value: stored, source: 'keychain' as const }
       const fromVars = fromEnv(env, fallback[key.name])
+      // A key that came from the environment never passed `host.secrets`: it is registered here, the
+      // moment it is found (error-logs §脱敏 层 2).
+      if (fromVars !== null) appLog.remember(fromVars)
       return { key, value: fromVars, source: fromVars === null ? null : ('env' as const) }
     }),
   )

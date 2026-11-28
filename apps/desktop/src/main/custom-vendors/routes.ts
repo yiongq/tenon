@@ -48,6 +48,7 @@ import {
 import { declaredBaseURL, devEnv, readSettledInputs, unboundSecrets } from '../provider.js'
 import type { EnvLike, SettledInputs } from '../provider.js'
 import { requestMaxTokens } from '../run-assembly.js'
+import { appLog } from '../log/app-log.js'
 import { vendorPresets } from './presets.js'
 import { instanceDefinition, instanceReach, instanceRefusal, instanceRow } from './registry.js'
 import { createCustomVendor, deleteCustomVendorHeld, updateCustomVendor } from './store.js'
@@ -140,7 +141,7 @@ type ModelsAnswer = RouteResponse<typeof customVendorFetchModels>
 
 export function registerCustomVendorRoutes(deps: CustomVendorRoutesDeps): void {
   const { ipcMain, host, providers, probes } = deps
-  const log = deps.log ?? ((line: string): void => console.warn(line))
+  const log = deps.log ?? appLog.line('custom-vendor', 'warn')
   const env = (): EnvLike => devEnv({ isPackaged: deps.isPackaged === true, env: deps.env })
   const store = { host, log, uuid: deps.uuid }
 

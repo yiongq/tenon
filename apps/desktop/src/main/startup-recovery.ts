@@ -31,6 +31,8 @@ export function startRecovery(q: {
   readonly sessions: SessionService | null
   readonly delayMs: number
   readonly log: (line: string) => void
+  /** Where the one line that is no problem goes (sessions that can be resumed); defaults to `log`. */
+  readonly info?: (line: string) => void
 }): RecoveryGate {
   const { sessions } = q
   if (sessions === null) return { ready: Promise.resolve() }
@@ -39,7 +41,7 @@ export function startRecovery(q: {
     const recovered = await sessions.recover()
     for (const error of recovered.errors) q.log(error)
     if (recovered.resumable.length > 0) {
-      q.log(
+      ;(q.info ?? q.log)(
         `[recovery] ${String(recovered.resumable.length)} session(s) can be resumed when opened`,
       )
     }

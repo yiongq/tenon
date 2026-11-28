@@ -48,6 +48,7 @@ import {
   unboundSecrets,
 } from '../provider.js'
 import type { EnvLike, ProviderInputs } from '../provider.js'
+import { appLog } from '../log/app-log.js'
 import { checkAddress } from './address.js'
 import { presetEndpoint } from './presets.js'
 import { instanceDefinition, isInstanceId, instanceRefusal } from './registry.js'
@@ -81,6 +82,8 @@ export function firstKeyDefaults(
     const variable = env[fallback[key.name] ?? '']?.trim()
     if (key.secret) {
       const value = stored || variable
+      // A key taken from the environment is one the log must know the moment it is read (error-logs §脱敏).
+      if (!stored && variable) appLog.remember(variable)
       if (value) {
         inputs.secrets[key.name] = value
         sources[key.name] = stored ? 'keychain' : 'env'

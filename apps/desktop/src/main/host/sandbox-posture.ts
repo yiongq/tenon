@@ -194,6 +194,11 @@ export interface SandboxPostureDeps {
   readonly home: AbsolutePath
   readonly profileDir: AbsolutePath
   readonly log: SandboxLogger
+  /**
+   * Where the line that reports the sandbox as it should be (`sandbox: active …`) goes: it is
+   * information, not a warning. Falls back to `log`.
+   */
+  readonly info?: SandboxLogger
 }
 
 /** How long the self-test and the sandbox-exec check may run (spec §启动 step 5). */
@@ -273,6 +278,16 @@ export function sandboxTestMode(
   return mode === 'off' || mode === 'fake' ? mode : null
 }
 
+/** The line that says where the sandbox came to: information when it is up, a warning when it is not. */
+function stateLine(
+  deps: Pick<SandboxPostureDeps, 'log' | 'info'>,
+  state: SandboxPostureOutcome['state'],
+  line: string,
+): void {
+  if (state === 'active') (deps.info ?? deps.log)(line)
+  else deps.log(line)
+}
+
 /**
  * Desktop's startup selector (step 13c calls this after creating the window). The seam returns
  * before real startup touches the disk, chdirs or initializes srt. `initialized` stays pending,
@@ -286,7 +301,7 @@ export function startDesktopSandboxPosture(
   const mode = sandboxTestMode(isPackaged, startupEnv)
   if (mode === null) return startSandboxPosture(deps)
   const state = mode === 'fake' ? 'active' : 'unavailable'
-  deps.log(`sandbox: ${state} (test-seam: ${mode})`)
+  stateLine(deps, state, `sandbox: ${state} (test-seam: ${mode})`)
   return {
     initialized: new Promise<void>(() => {}),
     outcome: Promise.resolve({
@@ -315,7 +330,11 @@ export function startSandboxPosture(deps: SandboxPostureDeps): SandboxPostureRun
   )
   void outcome.then((result) => {
     const reasons = result.reasons.map((one) => one.code).join(', ')
-    deps.log(`sandbox: ${result.state}${reasons === '' ? '' : ` (${reasons})`}`)
+    stateLine(
+      deps,
+      result.state,
+      `sandbox: ${result.state}${reasons === '' ? '' : ` (${reasons})`}`,
+    )
   })
   return { initialized: initialized.promise, outcome }
 }

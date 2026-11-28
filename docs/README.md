@@ -15,7 +15,7 @@
 - [claude-5-5-models](features/claude-5-5-models/spec.md) · implemented · Claude 5.5 两行与模型目录跟随最新 · 需要你：无。
 - [command-undo-copy](features/command-undo-copy/spec.md) · implemented · 命令的审批卡和展开的工具行，按快照的实情说命令的改动能不能还原；能还原时不再写「没法替你撤回」。 · 需要你：无。log 里记了一条观察（还原之后展开行退回「没法替你撤回」那句），要不要排进以后由你提。
 - [custom-vendors](features/custom-vendors/spec.md) · implemented · 自定义厂商（M6） · 需要你：—
-- [error-logs](features/error-logs/spec.md) · ready · 把 Tenon 今天只打到控制台的报错写进本地日志文件，写之前去掉机密；启动失败时告诉你日志在哪。 · 需要你：spec 的 PR #98 评审过、CI 绿后由你合并（或开自动合并）。
+- [error-logs](features/error-logs/spec.md) · ready · 把 Tenon 今天只打到控制台的报错写进本地日志文件，写之前去掉机密；启动失败时告诉你日志在哪。 · 需要你：点名合并 PR #101（它改了 `.oxlintrc.json` 与 `scripts/lint-gate.test…
 - [model-display-names](features/model-display-names/spec.md) · implemented · 模型显示名 · 需要你：—
 - [packaging](features/packaging/spec.md) · draft · 打 tag 时让 CI 打出 Mac 和 Linux 安装包，照用户的方式装上、打开、确认能用，再建一个只有你看得见的草稿发布。 · 需要你：现在不用批。P7 要你在自己的 Mac 上做，按「探针在批 ready 之前跑完」的规矩排在批 ready 之前：趁探…
 - [presentation-r1](features/presentation-r1/spec.md) · implemented · 呈现修订第一轮（presentation-r1） · 需要你：—

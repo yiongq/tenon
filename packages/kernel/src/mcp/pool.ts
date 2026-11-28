@@ -99,6 +99,8 @@ export interface McpPoolOptions {
     write: 'tokens' | 'client',
   ) => Promise<void> // 写钥匙串前先记进 config，挪到末尾（T35）
   readonly onChange: () => void // 状态、列表、说明变了
+  /** Every value added to a server's redaction table, as it is added (error-logs §对 03 的增补, D19). */
+  readonly onSecret?: (value: string) => void
 }
 export interface McpPool {
   apply(servers: readonly McpServerRuntime[]): void // 换快照：按 serverId 与 launchHash 起、停、重启
@@ -354,6 +356,7 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
           })
         if (value === null) throw new PoolError('missing-secret')
         s.secrets.push(value)
+        options.onSecret?.(value)
         return [name, value] as const
       }),
     )
@@ -638,7 +641,10 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
                 announce(s)
               }
             },
-            addSecret: (secret) => s.secrets.push(secret),
+            addSecret: (secret) => {
+              s.secrets.push(secret)
+              options.onSecret?.(secret)
+            },
           })
           s.oauth = oauth
         }

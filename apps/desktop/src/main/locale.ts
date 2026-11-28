@@ -5,6 +5,7 @@ import { createI18n } from '../i18n/create-instance.js'
 import { effectiveLocale } from '../i18n/resolve-locale.js'
 import type { Locale } from '../i18n/resources.js'
 import type { EventSender } from './host/index.js'
+import { appLog } from './log/app-log.js'
 
 export interface LocaleController {
   readonly i18n: I18n
@@ -24,7 +25,7 @@ export async function createLocaleController(
   send: EventSender,
 ): Promise<LocaleController> {
   let current = effectiveLocale(initial.locale, preferred)
-  const i18n = await createI18n(current, (m) => console.error('[i18n]', m))
+  const i18n = await createI18n(current, (m) => appLog.line('i18n', 'warn')(`[i18n] ${m}`))
   const listeners = new Set<(locale: Locale) => void>()
   return {
     i18n,

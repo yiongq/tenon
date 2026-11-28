@@ -3,6 +3,7 @@ import { createMcpPool } from '@tenon-app/kernel'
 import type { AbsolutePath, HostAdapter, McpPool, SchemaValidatorPort } from '@tenon-app/kernel'
 import type { Config } from '@tenon-app/contracts'
 import { watchConfig } from '../host/profile.js'
+import { appLog } from '../log/app-log.js'
 import { createMcpConsent } from './consent.js'
 import { mcpRuntimes, launchHash } from './runtime.js'
 import { createMcpStore } from './store.js'
@@ -29,7 +30,7 @@ export function createDesktopMcp(q: {
     consent,
     pool: () => pool,
     apply: (servers) => apply(servers),
-    log: (line) => console.warn(line),
+    log: appLog.line('mcp', 'warn'),
   })
   function runtimes(servers = config.mcpServers) {
     return mcpRuntimes(
@@ -60,6 +61,7 @@ export function createDesktopMcp(q: {
       if (!(await store.recordIssuer(id, issuer, kind)).ok) throw new Error('MCP server retired')
     },
     onChange: q.changed,
+    onSecret: (value) => appLog.remember(value),
   })
   const unwatch = watchConfig(q.host.identity, (next) => {
     const changed = JSON.stringify(config.mcpServers) !== JSON.stringify(next.mcpServers)

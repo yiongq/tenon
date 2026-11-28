@@ -1,6 +1,7 @@
 import { canonicalJson, sha256Hex } from '@tenon-app/kernel'
 import type { McpServerRuntime, HostNetwork } from '@tenon-app/kernel'
 import type { McpServer } from '@tenon-app/contracts'
+import { appLog } from '../log/app-log.js'
 import type { McpConsent } from './consent.js'
 export const CIMD_CLIENT_METADATA_URL: string | null =
   'https://yiongq.github.io/tenon/oauth/client-metadata.json'
@@ -30,6 +31,9 @@ export function mcpRuntimes(
     if (!server.enabled) return []
     const hash = launchHash(server)
     const t = server.transport
+    // `envs` values are plain settings, but one may well be a token: registered whenever the
+    // configuration goes to the pool, which also covers a server added while Tenon runs.
+    if (t.type === 'stdio') for (const value of Object.values(t.envs)) appLog.remember(value)
     return [
       {
         serverId: server.id,

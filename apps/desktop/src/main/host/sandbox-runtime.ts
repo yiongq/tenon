@@ -20,7 +20,13 @@ import {
   desktopSandboxFs,
   type DesktopSandboxDeps,
 } from './sandbox.js'
-import { credentialPaths, helperPaths, sandboxPreset, sessionConfig } from './sandbox-config.js'
+import {
+  credentialPaths,
+  helperPaths,
+  sandboxPreset,
+  sessionConfig,
+  type HelperPaths,
+} from './sandbox-config.js'
 import {
   desktopPostureFs,
   desktopPostureProcesses,
@@ -301,8 +307,13 @@ export async function createDesktopSandboxRuntime(q: {
   readonly isPackaged: boolean
   readonly startupEnv: StartupEnv
   readonly log: (line: string) => void
+  readonly unattributedLog?: (line: string) => void
+  /** Where the line that says the sandbox is active goes (information); falls back to `log`. */
+  readonly info?: (line: string) => void
 }): Promise<
   DesktopSandboxRuntime & {
+    /** The helper programs and srt's folder as they were handed to the sandbox. */
+    readonly helpers: HelperPaths
     bindSessionFolders(read: (sessionId: string) => Promise<readonly AbsolutePath[]>): void
     signalReset(): void
   }
@@ -348,6 +359,7 @@ export async function createDesktopSandboxRuntime(q: {
     isPackaged: q.isPackaged,
     startupEnv: q.startupEnv,
     log: q.log,
+    ...(q.unattributedLog === undefined ? {} : { unattributedLog: q.unattributedLog }),
     startPosture: () =>
       startDesktopSandboxPosture(
         {
@@ -384,12 +396,14 @@ export async function createDesktopSandboxRuntime(q: {
           home,
           profileDir: paths.profileDir,
           log: q.log,
+          ...(q.info === undefined ? {} : { info: q.info }),
         },
         q.isPackaged,
         q.startupEnv,
       ),
   })
   return Object.assign(runtime, {
+    helpers,
     bindSessionFolders: (read: typeof folders) => {
       folders = read
     },
