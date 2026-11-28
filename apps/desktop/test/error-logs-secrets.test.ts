@@ -38,6 +38,7 @@ import {
 import type { IpcMainLike } from '@tenon-app/contracts'
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest'
 import { createProviderView } from '../src/main/custom-vendors/registry.js'
+import { firstKeyDefaults } from '../src/main/custom-vendors/store.js'
 import { createDesktopHost, useMemorySecrets } from '../src/main/host/index.js'
 import { readConfig } from '../src/main/host/profile.js'
 import { snapshotEnv } from '../src/main/host/shell-env.js'
@@ -60,6 +61,7 @@ import {
   CONFIGURED,
   ENVVAR,
   EVENT_INJECTORS,
+  FIRST_KEY_ENV,
   EVENT_LEVELS,
   MCP_ENVS,
   MCP_ENV_KEY,
@@ -329,4 +331,27 @@ it('error-logs 验收 3: the host the desktop builds registers a value the momen
     written,
   )
   expect(appLog.redact(written)).toBe('[redacted]')
+})
+
+it('error-logs 验收 3: 复现 a key that firstKeyDefaults finds in the environment is registered', async () => {
+  expectUnregistered(FIRST_KEY_ENV)
+  const registry = createProviderRegistry()
+  registerBuiltinProviders(registry)
+  const definition = registry.get(ANTHROPIC_PROVIDER_ID)
+  if (definition === null) throw new Error('anthropic is not registered')
+  const host = createMemoryHost()
+  await host.fs.mkdirp(absolutePath(host.identity.profileDir))
+  const config = await readConfig(host.fs, host.identity)
+  // The `apiKey` is typed on the settings card; the vendor's other secret, `authToken`, is not, and
+  // the first-key defaults resolve it the way a send would: from the environment of a dev build.
+  firstKeyDefaults(
+    config,
+    definition,
+    { apiKey: 'typed-on-the-card-0001' },
+    { ANTHROPIC_AUTH_TOKEN: FIRST_KEY_ENV.raw },
+    {},
+  )
+  for (const spelling of spellingsOf(FIRST_KEY_ENV)) {
+    expect([spelling, appLog.redact(`x ${spelling} y`)]).toEqual([spelling, 'x [redacted] y'])
+  }
 })

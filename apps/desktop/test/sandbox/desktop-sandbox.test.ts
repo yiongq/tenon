@@ -321,6 +321,8 @@ interface HarnessOptions {
   readonly initialized?: boolean
   /** False for the eval host, which never chdirs (读法 50). */
   readonly chdir?: boolean
+  /** The log of a violation that fits no open command (main hands it its own source: error-logs §限量). */
+  readonly unattributedLog?: (line: string) => void
 }
 
 function harness(platform: SandboxPlatform, options: HarnessOptions = {}) {
@@ -382,6 +384,7 @@ function harness(platform: SandboxPlatform, options: HarnessOptions = {}) {
     },
     onSignal: (listener) => signals.push(listener),
     log: (line) => logs.push(line),
+    ...(options.unattributedLog === undefined ? {} : { unattributedLog: options.unattributedLog }),
   })
   const session = sessionConfig(
     {
@@ -736,6 +739,21 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
         },
       ])
     })
+  })
+
+  it('error-logs 验收 16: a violation that fits no open command goes to the log of its own, and not to the shared one', async () => {
+    const unattributed: string[] = []
+    const h = harness('linux', { unattributedLog: (line) => unattributed.push(line) })
+    await h.run()
+    const id = h.calls[0]?.id ?? ''
+    await h.sandbox.afterExit(TOOL_USE)
+    // The command is settled: this one is late, and a program that can write such lines can write
+    // any number of them, so they must not use up the shared log's share of a minute.
+    h.store.add(id, 'deny network-outbound late.example.com:443 (host is not on the allow list)')
+    expect(unattributed).toEqual([
+      `sandbox: a violation for no open command (key "${id}"): deny network-outbound late.example.com:443 (host is not on the allow list)`,
+    ])
+    expect(h.logs).toEqual([])
   })
 
   it('04 验收 8: a write-heavy command keeps its one real denial', async () => {

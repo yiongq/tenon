@@ -354,6 +354,16 @@ it('error-logs 验收 3: common token formats are replaced without being registe
   expect(redactedPem).not.toContain('abcdefghijklmnopqrstuvwxyz0123456789ABCD')
   expect(redactedPem).toContain('after')
 
+  // A block cut short upstream (the kernel's 500-character detail, a connector's error text) has no
+  // END line: it goes from its BEGIN line to the end of the text.
+  const cutPem = log.redact(
+    `failed: -----BEGIN ${'PRIVATE'} KEY-----\n${pemBody}\nabcdefghijklmnop`,
+  )
+  expect(cutPem).not.toContain(pemBody)
+  expect(cutPem).not.toContain('abcdefghijklmnop')
+  expect(cutPem).toContain('[redacted]')
+  expect(cutPem.startsWith('failed: ')).toBe(true)
+
   // The value of these parameters in an address, whatever the case of the name; the rest stays.
   const params = [
     'token',

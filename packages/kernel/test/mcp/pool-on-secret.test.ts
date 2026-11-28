@@ -7,9 +7,6 @@
  * The pool, the OAuth provider and the token store are the real ones; the connection is the fake
  * of `pool.test.ts` (this file asks what the pool reported, not how a server answers), and the
  * keychain is the memory host's.
- *
- * `onSecret` is not on `McpPoolOptions` until segment 1 adds it, so the one `@ts-expect-error`
- * below keeps the typecheck green meanwhile: delete it when tsc reports it unused.
  */
 import { afterEach, expect, it, vi } from 'vitest'
 import { absolutePath, createMemoryHost } from '../../src/index.js'

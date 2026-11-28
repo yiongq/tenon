@@ -174,12 +174,10 @@ it('error-logs 验收 14: an uncaught renderer error logs its first line, file a
   })
   const found = logged()
   expect(found[1]?.['message']).toBe('Uncaught Error: key [redacted] was refused')
-  const cutMessage = found[2]?.['message'] as string
-  expect(cutMessage.startsWith(`Uncaught Error: ${'e'.repeat(270)}`)).toBe(true)
-  expect(cutMessage.length).toBeLessThanOrEqual(316)
-  const cutSource = found[2]?.['source'] as string
-  expect(cutSource.startsWith('a'.repeat(150))).toBe(true)
-  expect(cutSource.length).toBeLessThanOrEqual(216)
+  // 416 characters cut to 300 (the 16 of "Uncaught Error: " and 284 e), 116 left out; the file name,
+  // `aaa….js` of 253 characters, cut to 200, 53 left out.
+  expect(found[2]?.['message']).toBe(`Uncaught Error: ${'e'.repeat(284)}…(+116)`)
+  expect(found[2]?.['source']).toBe(`${'a'.repeat(200)}…(+53)`)
 
   // The same error again and again: the first is written at once, the rest are counted, and the
   // count is written when something else comes. (3 of them: the count line says 3.)
@@ -209,4 +207,33 @@ it('error-logs 验收 14: an uncaught renderer error logs its first line, file a
   expect(anothers).toHaveLength(2)
   expect(anothers[1]?.['repeats']).toBe(3)
   expect(readRecords(join(dir, 'main.jsonl')).at(-1)?.event).toBe('app.quit')
+})
+
+it('error-logs 验收 14: a count still waiting when the minute is over is written by the next write, not only when the app quits', () => {
+  const { log, dir, clock } = openLog({ packaged: true })
+  const renderer = fakeContents()
+  watchRendererConsole(renderer.contents, log)
+  const logged = () =>
+    readRecords(join(dir, 'main.jsonl')).filter((r) => r.event === 'renderer.error')
+  const boom = {
+    level: 'error',
+    message: 'Uncaught Error: boom',
+    sourceId: BUNDLE,
+    lineNumber: 3,
+  }
+  renderer.emit(boom)
+  renderer.emit(boom)
+  renderer.emit(boom)
+  expect(logged().map((r) => r['repeats'])).toEqual([1])
+
+  // Nothing else is reported, and the minute passes: the first write after it carries the count
+  // out. It is read here, before `close`, which would write it too.
+  clock.advance(61_000)
+  log.line('host', 'info')('a write in the next minute')
+  expect(logged().map((r) => [r['message'], r['repeats']])).toEqual([
+    ['Uncaught Error: boom', 1],
+    ['Uncaught Error: boom', 3],
+  ])
+  log.close()
+  expect(logged()).toHaveLength(2)
 })

@@ -50,7 +50,7 @@ function failure(error: Omit<Extract<StreamEvent, { type: 'error' }>, 'type'>): 
   return scriptedTurn({ usage: USAGE, terminal: { type: 'error', ...error } })
 }
 
-function harness() {
+function harness(options: { readonly compactionThreshold?: number } = {}) {
   const provider = createScriptedProvider({ models: [MODEL] })
   const loop = createTestLoopPorts({ connector: { provider, model: MODEL } })
   const logs: string[] = []
@@ -63,6 +63,9 @@ function harness() {
       connector: loop.connector,
       protectedFiles: [],
       log: (line) => logs.push(line),
+      ...(options.compactionThreshold === undefined
+        ? {}
+        : { compactionThreshold: options.compactionThreshold }),
     },
     { tools: {} },
   )
@@ -129,5 +132,78 @@ describe('a failed attempt', () => {
     h.provider.script(scriptedTurn({ deltas: ['fine'], usage: USAGE }))
     await h.send('fourth message')
     expect(h.failed()).toHaveLength(1)
+  })
+})
+
+/**
+ * A long conversation is summarized before its next request is sent (the compaction request,
+ * `publish: false`): when that request fails, the Run ends with `provider-error` and the main
+ * request never goes out, so the summary's failure is the only failure there is to log.
+ */
+describe('a failed summary attempt', () => {
+  const turn = (inputTokens: number) =>
+    scriptedTurn({ deltas: ['an old answer'], usage: { ...USAGE, inputTokens } })
+
+  /** Three finished turns, the last one over the 1000-token threshold: the next send summarizes. */
+  async function seeded() {
+    const h = harness({ compactionThreshold: 1000 })
+    for (const [index, tokens] of [10, 10, 2000].entries()) {
+      h.provider.script(turn(tokens))
+      // oxlint-disable-next-line no-await-in-loop -- each turn must end before the next begins
+      await h.send(`old question ${index}`)
+    }
+    expect(h.failed()).toEqual([])
+    return h
+  }
+
+  it('error-logs 验收 7: 复现 a summary request that fails writes the same attempt-failed line as a main request', async () => {
+    const h = await seeded()
+    h.provider.script(
+      failure({
+        code: 'auth',
+        retryable: false,
+        status: 401,
+        providerCode: '1000',
+        detail: 'DETAIL-SUMMARY: the key was refused',
+      }),
+    )
+    const runId = await h.send('a question that needs a summary first')
+    // Only the summary request was sent: three seeded turns and the one failed summary.
+    expect(h.provider.requests).toHaveLength(4)
+    expect(h.failed()).toEqual([
+      `[provider] run ${runId} attempt failed: provider=anthropic model=claude-run-1 code=auth status=401 providerCode=1000 retryable=false detail=DETAIL-SUMMARY: the key was refused`,
+    ])
+  })
+
+  it('error-logs 验收 7: 复现 every failed summary attempt gets its line, a retryable one included', async () => {
+    const h = await seeded()
+    h.provider.retryAdvice = () => ({ maxAttempts: 2, baseDelayMs: 0 })
+    for (const detail of ['DETAIL-FIRST', 'DETAIL-SECOND']) {
+      h.provider.script(
+        failure({
+          code: 'rate-limit',
+          retryable: true,
+          status: 429,
+          providerCode: null,
+          detail,
+          retryAfterMs: 0,
+        }),
+      )
+    }
+    const runId = await h.send('a question that needs a summary first')
+    expect(h.provider.requests).toHaveLength(5)
+    expect(h.failed()).toEqual([
+      `[provider] run ${runId} attempt failed: provider=anthropic model=claude-run-1 code=rate-limit status=429 providerCode=- retryable=true detail=DETAIL-FIRST`,
+      `[provider] run ${runId} attempt failed: provider=anthropic model=claude-run-1 code=rate-limit status=429 providerCode=- retryable=true detail=DETAIL-SECOND`,
+    ])
+  })
+
+  it('error-logs 验收 7: a summary that succeeds writes no such line', async () => {
+    const h = await seeded()
+    h.provider.script(scriptedTurn({ deltas: ['the summary'], usage: USAGE }))
+    h.provider.script(scriptedTurn({ deltas: ['the answer'], usage: USAGE }))
+    await h.send('a question that needs a summary first')
+    expect(h.provider.requests).toHaveLength(5)
+    expect(h.failed()).toEqual([])
   })
 })

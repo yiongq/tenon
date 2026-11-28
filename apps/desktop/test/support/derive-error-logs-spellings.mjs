@@ -22,6 +22,7 @@ const raw = {
   OAUTH_CLIENT: 'TSNT-oclient"F4/Ru+6=ue\\S8aT5bY',
   MCP_ENV_KEY: 'TSNT-mcpenvkey"G5/Sv+7=td\\T9bU6cZ',
   MCP_ENVS: 'TSNT-mcpenvs"H6/Tw+8=sc\\U2cV7dA',
+  FIRST_KEY_ENV: 'TSNT-firstkey"K8/Vy+1=qa\\W4eX9fC',
   TABLE: 'TSNT-table"J7/Ux+9=rb\\V3dW8eB',
 }
 

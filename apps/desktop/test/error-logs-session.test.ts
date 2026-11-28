@@ -33,6 +33,7 @@ import { registerSessionRoutes } from '../src/main/session.js'
 import { startFakeAnthropic } from './support/fake-anthropic.js'
 import type { FakeAnthropic } from './support/fake-anthropic.js'
 import { ANTHROPIC_ORIGIN, seamNetwork } from './support/seam-network.js'
+import { CUT_500, fragmentsOf } from './support/error-logs-sentinels.js'
 import {
   leaksIn,
   logRouteFailures,
@@ -41,6 +42,9 @@ import {
   rememberingSecrets,
   sweepTempRoots,
 } from './support/error-logs.js'
+
+/** How many characters before the secret in the failed request's message put the kernel's cut inside it. */
+const PAD_TO_THE_CUT = 380
 
 /** These cases run no Bash: the shell is a stand-in. */
 const NO_SHELL: CommandShell = { path: absolutePath('/bin/sh'), env: () => Promise.resolve({}) }
@@ -86,7 +90,12 @@ function collector(): {
  * The whole path of a conversation, wired the way `index.ts` wires it, with the app log where
  * the console was.
  */
-async function conversation(server: FakeAnthropic, env: Record<string, string> = {}) {
+async function conversation(
+  server: FakeAnthropic,
+  env: Record<string, string> = {},
+  /** Sees each line the kernel hands its `log`, as the kernel wrote it, before the app log redacts it. */
+  seeKernelLine: (line: string) => void = () => {},
+) {
   const { log, dir } = openLog({ packaged: true })
   const memory = createMemoryHost({ network: seamNetwork({ [ANTHROPIC_ORIGIN]: server.baseURL }) })
   const host = { ...memory, secrets: rememberingSecrets(memory.secrets, log) }
@@ -94,7 +103,11 @@ async function conversation(server: FakeAnthropic, env: Record<string, string> =
   const providers = createProviderRegistry()
   registerBuiltinProviders(providers)
 
-  const kernel = log.line('kernel', 'error')
+  const toLog = log.line('kernel', 'error')
+  const kernel = (line: string): void => {
+    seeKernelLine(line)
+    toLog(line)
+  }
   const sessions = createSessionService({
     host,
     tape: createMemoryTapeStore({ identity: host.identity }),
@@ -205,6 +218,47 @@ it('error-logs 验收 7: a failed provider attempt logs code, status and detail 
     rest.startsWith(`provider=anthropic model=${model} code=auth status=401 providerCode=`),
   ).toBe(true)
   expect(rest).toMatch(/ retryable=false detail=\S/)
+  expect(leaksIn(dir, [KEY])).toEqual([])
+})
+
+it('error-logs 验收 3: 复现 a failed attempt whose detail the kernel cut at 500 characters inside another registered secret leaves no part of that secret in the log', async () => {
+  // The kernel redacts the detail with the credentials of the vendor it asked, then cuts it to 500
+  // characters and adds a `…`. A secret of another source (a connector's token here) that the vendor
+  // or a gateway echoed back is not one of those, and the cut can fall inside it.
+  const OTHER = CUT_500
+  const KEY = 'wrong-key-from-the-card-ZQ9'
+  fake = await startFakeAnthropic({
+    chunks: [],
+    failWith: {
+      status: 401,
+      type: 'authentication_error',
+      message: `${'m'.repeat(PAD_TO_THE_CUT)}${OTHER} and the rest`,
+    },
+  })
+  const seen: string[] = []
+  const { call, out, dir, sessionId, log } = await conversation(fake, {}, (line) => seen.push(line))
+  log.remember(OTHER)
+  expect(
+    await call('provider.configure', { id: 'anthropic', values: { apiKey: KEY } }),
+  ).toMatchObject({ ok: true })
+  await call('chat.send', { sessionId, text: 'hello there' })
+  expect(await out.waitFor('error')).toMatchObject({ code: 'auth' })
+
+  // The cut did fall inside the secret, as the kernel wrote the line: 8 or more of its characters
+  // and not all of them are the last thing in the detail.
+  const kernelLine = seen.find((line) => line.includes('attempt failed')) ?? ''
+  const part = /(TSNT-cut500[^…]*)…$/u.exec(kernelLine)?.[1] ?? ''
+  expect(part.length).toBeGreaterThanOrEqual(8)
+  expect(part.length).toBeLessThan(OTHER.length)
+  expect(OTHER.startsWith(part)).toBe(true)
+
+  // And what the log keeps of it is none of it.
+  const failed = readRecords(join(dir, 'main.jsonl')).filter(
+    (r) => r.event === 'line' && String(r['text']).includes('attempt failed'),
+  )
+  expect(failed).toHaveLength(1)
+  expect(String(failed[0]?.['text'])).toContain('[redacted]')
+  expect(leaksIn(dir, fragmentsOf(OTHER))).toEqual([])
   expect(leaksIn(dir, [KEY])).toEqual([])
 })
 

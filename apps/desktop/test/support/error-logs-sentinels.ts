@@ -77,6 +77,13 @@ export const MCP_ENVS: Sentinel = {
   json: 'TSNT-mcpenvs\\"H6/Tw+8=sc\\\\U2cV7dA',
 }
 
+export const FIRST_KEY_ENV: Sentinel = {
+  raw: 'TSNT-firstkey"K8/Vy+1=qa\\W4eX9fC',
+  base64: 'VFNOVC1maXJzdGtleSJLOC9WeSsxPXFhXFc0ZVg5ZkM=',
+  url: 'TSNT-firstkey%22K8%2FVy%2B1%3Dqa%5CW4eX9fC',
+  json: 'TSNT-firstkey\\"K8/Vy+1=qa\\\\W4eX9fC',
+}
+
 export const TABLE: Sentinel = {
   raw: 'TSNT-table"J7/Ux+9=rb\\V3dW8eB',
   base64: 'VFNOVC10YWJsZSJKNy9VeCs5PXJiXFYzZFc4ZUI=',

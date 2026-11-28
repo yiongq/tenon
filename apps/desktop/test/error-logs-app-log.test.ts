@@ -10,6 +10,11 @@
  *
  * Expected values are literals written from the spec: field names and order, the event names, the
  * source names, the 60/600 line caps, 16 KiB, 15 MiB, the file modes.
+ *
+ * The "files that belong to somebody else" case of 验收 13 is the one a test cannot make with real
+ * files unless it runs as root: it can only be driven through `createAppLog`'s `uid` option, which
+ * is told another user id. Which of the two checks (the folder's owner, the file's owner) turned a
+ * case down is told apart in error-logs-files.test.ts, where the two are given different answers.
  */
 import {
   chmodSync,
@@ -135,13 +140,8 @@ describe('one record per line', () => {
       const { log, dir } = openLog()
       log.line('host', 'warn')('x'.repeat(5000))
       const stored = readRecords(join(dir, 'main.jsonl'))[0]?.text as string
-      const mark = /…\(\+(\d+)\)$/.exec(stored)
-      expect(mark).not.toBeNull()
-      const kept = stored.length - (mark?.[0].length ?? 0)
-      expect(kept).toBeLessThanOrEqual(2000)
-      expect(kept).toBeGreaterThanOrEqual(1990)
-      expect(Number(mark?.[1])).toBe(5000 - kept)
-      expect(stored.slice(0, kept)).toBe('x'.repeat(kept))
+      // 2000 characters kept, the mark after them and outside the limit, 3000 left out.
+      expect(stored).toBe(`${'x'.repeat(2000)}…(+3000)`)
     }
 
     // A line over 16 KiB gets its longest string field halved until it fits.
@@ -212,15 +212,12 @@ describe('one record per line', () => {
       open()
       const records = readRecords(join(dir, 'main.jsonl'))
       const kept = records.filter((r) => r.event === 'process.gone')
-      const dropped = records
-        .filter((r) => r.event === 'log.dropped')
-        .reduce((sum, r) => sum + (r['count'] as number), 0)
-      expect(kept.length).toBeGreaterThan(0)
-      expect(kept.length).toBeLessThan(total)
-      expect(kept.length + dropped).toBe(total)
-      const codes = kept.map((r) => r['exitCode'] as number)
-      expect(codes).toEqual(codes.toSorted((a, b) => a - b))
-      expect(new Set(codes).size).toBe(codes.length)
+      // The buffer holds 1000 lines and the later ones are the ones dropped: 0 to 999 are written, in
+      // order, and one line says that 49 000 were not.
+      expect(kept.map((r) => r['exitCode'])).toEqual(Array.from({ length: 1000 }, (_, i) => i))
+      expect(
+        records.filter((r) => r.event === 'log.dropped').map((r) => [r['source'], r['count']]),
+      ).toEqual([['buffer', 49_000]])
     }
   })
 })
@@ -343,7 +340,8 @@ describe('the size limit, the protections and the cap per source', () => {
         expect(readText(join(root, 'other-name'))).toBe('OLD\n')
       }
 
-      // Files that belong to somebody else (the log is told another user id): not written.
+      // Files that belong to somebody else (the log is told another user id): not written. The
+      // folder's owner is checked first, so it is that check that turns this one down.
       {
         const root = makeTempRoot('foreign')
         const logs = join(root, 'logs')
@@ -442,10 +440,27 @@ describe('the size limit, the protections and the cap per source', () => {
       ).toBe('host 59')
 
       // The next window opens: the drops are accounted for, once per source, and logging resumes.
+      // The first write of the new window writes them, before it: read now, before `close` could.
       clock.advance(61_000)
       log.line('host', 'warn')('host again')
+      const atWindow = readRecords(join(dir, 'main.jsonl'))
+      expect(
+        atWindow
+          .slice(
+            0,
+            atWindow.findIndex((r) => r['text'] === 'host again'),
+          )
+          .filter((r) => r.event === 'log.dropped')
+          .map((r) => [r['source'], r['count']])
+          .toSorted(),
+      ).toEqual([
+        ['host', 40],
+        ['tape', 40],
+      ])
       log.line('tape', 'warn')('tape again')
+      expect(existsSync(join(dir, 'running.json'))).toBe(true)
       log.close()
+      expect(existsSync(join(dir, 'running.json'))).toBe(false)
       records = readRecords(join(dir, 'main.jsonl'))
       const dropped = records.filter((r) => r.event === 'log.dropped')
       expect(dropped.map((r) => [r['source'], r['count']]).toSorted()).toEqual([

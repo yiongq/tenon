@@ -76,6 +76,17 @@ test('error-logs 验收 17: start comes first, window, posture and helpers all a
     for (const field of ['packageDir', 'applySeccomp', 'javaAgentJar']) {
       expect(typeof helpers?.[field], field).toBe('string')
     }
+    // 04's own line about the posture comes through the `host` source: that the sandbox is up is
+    // information, not a warning, so a normal start has no warn or error line about it (the fake
+    // sandbox of the e2e launch says `sandbox: active (test-seam: fake)`).
+    const hostLine = records.find(
+      (record) =>
+        record.event === 'line' &&
+        record['source'] === 'host' &&
+        String(record['text']).startsWith('sandbox: active'),
+    )
+    expect(hostLine, 'the host source says the sandbox is active').toBeDefined()
+    expect(['warn', 'error']).not.toContain(hostLine?.level)
     // While it runs, the marker says so.
     expect(runningMarker(userData)).toMatchObject({ v: 1, version: electronVersion, pid })
     expect(String(runningMarker(userData)?.['startedAt'])).toMatch(LOCAL_TIME)
