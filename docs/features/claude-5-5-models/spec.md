@@ -1,6 +1,7 @@
 # Claude 5.5 两行与模型目录跟随最新
 
-Status: ready
+Status: implemented
+Approved: implemented · 2026-11-28 · 「claude-5-5-models 改 implemented」 · 对话
 Tier: standard — 改 ModelInfo、config.json 的默认与会话事实投影这类别处依赖的格式；不加 Tape 事实名，不碰权限、沙箱与凭据（ADR-004 A5）
 Kind: features
 Owner: 起草在 Claude Code（2026-10-15），厂商事实当天按一手页面核过（§事实与出处）。owner 2026-10-15 定：开放问题 1A、2A、3A、5A、6A、7A、8A；开放问题 4（菜单位置）由 owner 的新规则「跟随最新」取代（§跟随最新）。owner 2026-10-15 选「跟随最新」A 时一并定了：运行中的会话不随默认改动而换（§跟随最新「会话不换」，§点名 (f)）。定法见 §开放问题（已定），没选的项见 §被否决的方案。§点名 (g)（菜单写指针、只改档不写默认）是本 spec 推出的，owner 2026-10-15 经问卷单独确认 A。同日 owner 接受本 spec，`Status` 改 `ready`（`Revisions:` ㊴）
