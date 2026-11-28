@@ -17,6 +17,7 @@ Changed by: 05（§点停止时各状态怎么收）
 Changed by: auto-tier-hardening（§外带检查）；auto-tier-hardening（§挂点与会话视图）；auto-tier-hardening（§授权、工作区与外带检查的继承）
 Changed by: 06（§会话形态）；06（§会话事实）；06（§主进程与 kernel 的循环接口）；06（§名字总表）；06（§载荷）；06（§内置工具与参数）；06（§决策表与各层输入）；06（§合并：两步）；06（§可逆性）
 Changed by: 06（§Inspector 接口与合议）；06（§外带检查）；06（§挂点与会话视图）；06（§railguard 映射）；06（§判决记录与摘要）；06（§主循环与 Run 的结束）；06（§权限）
+Changed by: claude-5-5-models（§对 01-provider-and-tape 的修补，含 §点名 (a)(f)(g)，owner 2026-10-15 确认）；claude-5-5-models（§主进程与 kernel 的循环接口）；claude-5-5-models（§模型选择，§点名 (f)，owner 2026-10-15 定）；claude-5-5-models（§模型菜单与输入框）；claude-5-5-models（§记录格式与费用口径）；claude-5-5-models（§开工前裁决，§点名 (b)，owner 2026-10-15 选 5A 确认）；claude-5-5-models（§模型菜单与输入框，替换「更多模型 ›」的括注）
 
 ## 背景与问题
 
