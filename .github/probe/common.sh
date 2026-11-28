@@ -133,6 +133,18 @@ crash_self() { # label main-regex data-dir launch-command...
   done
 }
 
+# error-logs P3: what the UI probe heard (probe.ts, TENON_PROBE_UI=1).
+ui_results() {
+  if [ -s "$OUT/ui-probe.json" ]; then
+    jq -r '.summary[]' "$OUT/ui-probe.json" 2>&1 | res
+    res "child-process-gone events: $(jq -c '.gone' "$OUT/ui-probe.json" 2>&1 | cut -c1-900)"
+    res "console-messages after the first load: $(jq -c '[.messages[] | select(.phase != "startup" and .phase != "running")]' "$OUT/ui-probe.json" 2>&1 | cut -c1-1500)"
+  else
+    res "no UI probe output; the app's last lines:"
+    tail -n 12 "$OUT/ui-probe.log" | cut -c1-240 | res
+  fi
+}
+
 # error-logs P2: six scenarios of Electron's main process meeting an unhandled rejection or an
 # uncaught exception. PROBE_PREFIX and PROBE_FLAGS (arrays) go before and after `electron`.
 main_error_scenarios() {

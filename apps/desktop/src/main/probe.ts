@@ -28,6 +28,122 @@ import { helperPaths } from './host/sandbox-config.js'
 
 type ProbeHost = Awaited<ReturnType<typeof createDesktopHost>>
 
+/** error-logs P3 (TENON_PROBE_UI=1, development build): what main sees of UI errors and exits. */
+const ui = {
+  phase: 'startup',
+  started: Date.now(),
+  messages: [] as Section[],
+  gone: [] as Section[],
+}
+
+/** The listeners that have to exist before the first window does. */
+export function probeUiSetup(app: App): void {
+  if (process.env['TENON_PROBE_UI'] !== '1') return
+  app.on('child-process-gone', (_event, details) => {
+    ui.gone.push({
+      phase: ui.phase,
+      atMs: Date.now() - ui.started,
+      type: details.type,
+      reason: details.reason,
+      exitCode: details.exitCode,
+      serviceName: details.serviceName ?? null,
+      name: details.name ?? null,
+    })
+  })
+  app.on('render-process-gone', (_event, _contents, details) => {
+    ui.gone.push({
+      phase: ui.phase,
+      atMs: Date.now() - ui.started,
+      type: 'renderer (render-process-gone)',
+      reason: details.reason,
+      exitCode: details.exitCode,
+    })
+  })
+}
+
+const UI_TRIGGERS: readonly (readonly [string, string])[] = [
+  ['uncaught', "setTimeout(() => { throw new Error('P3-uncaught') }, 0); 1"],
+  ['rejection', "setTimeout(() => { Promise.reject(new Error('P3-rejection')) }, 0); 1"],
+  ['render-throw', "window.dispatchEvent(new CustomEvent('tenon-probe-render-throw')); 1"],
+]
+
+const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** Makes the three UI errors, then quits normally; writes what main heard on the way. */
+export async function probeUiRun(app: App, win: BrowserWindow): Promise<void> {
+  if (process.env['TENON_PROBE_UI'] !== '1') return
+  const contents = win.webContents
+  contents.on('console-message', (event) => {
+    const lines = event.message.split('\n')
+    ui.messages.push({
+      phase: ui.phase,
+      level: event.level,
+      first: (lines[0] ?? '').slice(0, 200),
+      lines: lines.length,
+      source: `${event.sourceId}:${event.lineNumber}`.slice(-120),
+    })
+  })
+  await section(() =>
+    within(
+      new Promise<void>((resolve) => contents.once('did-finish-load', () => resolve())),
+      40_000,
+      'did-finish-load',
+    ),
+  )
+  ui.phase = 'running'
+  await pause(4_000)
+  for (const [name, code] of UI_TRIGGERS) {
+    ui.phase = name
+    // oxlint-disable-next-line no-await-in-loop -- one error at a time, on purpose
+    await contents.executeJavaScript(code).catch((error: unknown) => {
+      ui.messages.push({ phase: name, executeJavaScriptRejected: message(error) })
+    })
+    // oxlint-disable-next-line no-await-in-loop
+    await pause(2_000)
+  }
+  let written = false
+  const finish = (how: string): void => {
+    if (written) return
+    written = true
+    const summary: string[] = []
+    const count = (phase: string): Section[] => ui.messages.filter((one) => one['phase'] === phase)
+    summary.push(
+      `during load: ${count('startup').length} console-messages, levels ${[...new Set(count('startup').map((one) => String(one['level'])))].join(',') || '-'}`,
+    )
+    for (const [name] of UI_TRIGGERS) {
+      const own = count(name)
+      summary.push(
+        `${name}: ${own.length === 0 ? 'NOT in console-message' : `in console-message x${own.length}`}${own
+          .map(
+            (one) =>
+              ` | ${String(one['level'])}: ${String(one['first'] ?? one['executeJavaScriptRejected'])}`,
+          )
+          .join('')}`,
+      )
+    }
+    const early = ui.gone.filter((one) => one['phase'] !== 'quit')
+    summary.push(
+      `child-process-gone before quit: ${early.length === 0 ? 'none' : early.map((one) => `${String(one['type'])}/${String(one['reason'])}@${String(one['phase'])}+${String(one['atMs'])}ms`).join(', ')}`,
+    )
+    const late = ui.gone.filter((one) => one['phase'] === 'quit')
+    summary.push(
+      `child-process-gone during the normal quit: ${late.length === 0 ? 'none' : late.map((one) => `${String(one['type'])}/${String(one['reason'])} exit=${String(one['exitCode'])}`).join(', ')}`,
+    )
+    summary.push(`quit: ${how}`)
+    const text = JSON.stringify({ summary, messages: ui.messages, gone: ui.gone }, null, 2)
+    process.stdout.write(`TENON_PROBE_UI_BEGIN\n${text}\nTENON_PROBE_UI_END\n`)
+    const out = process.env['TENON_PROBE_OUT']
+    if (out !== undefined && out !== '') writeFileSync(out, text)
+  }
+  app.once('quit', () => finish('normal (the quit event fired)'))
+  setTimeout(() => {
+    finish('forced: no quit event in 25 s')
+    app.exit(0)
+  }, 25_000)
+  ui.phase = 'quit'
+  app.quit()
+}
+
 /**
  * error-logs P1: a real crash from inside the app, once the window has loaded
  * (TENON_PROBE_CRASH=renderer or main). A kill -SEGV from outside may not reach Crashpad on macOS,

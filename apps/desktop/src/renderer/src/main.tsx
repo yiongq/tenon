@@ -28,6 +28,17 @@ for (const family of ['Source Serif 4', 'Tenon Serif Latin', 'Source Code Pro'])
   document.fonts.load(`1em "${family}"`).catch(() => undefined)
 }
 
+// PROBE (error-logs P3, never merged): a component that throws while rendering, mounted in a root
+// of its own on request, so main can see what such an error sends to console-message.
+function ProbeBoom(): never {
+  throw new Error('P3-render-throw')
+}
+window.addEventListener('tenon-probe-render-throw', () => {
+  const holder = document.createElement('div')
+  document.body.append(holder)
+  createRoot(holder).render(<ProbeBoom />)
+})
+
 const container = document.getElementById('root')
 if (!container) throw new Error('root container missing')
 

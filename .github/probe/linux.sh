@@ -61,6 +61,13 @@ phase_dev() {
   res "dev self-check exit=$?"
   tail -n 15 "$OUT/dev-probe.log" | cut -c1-300
   show_probe "$OUT/dev-probe.json" "development build"
+  res "== error-logs P3: UI errors seen in console-message, and a normal quit (unpackaged)"
+  rm -f "$OUT/ui-probe.json"
+  TENON_PROBE_UI=1 TENON_PROBE_OUT="$OUT/ui-probe.json" \
+    python3 "$PROBE/run-timeout.py" 120 xvfb-run -a pnpm exec electron . --no-sandbox \
+    >"$OUT/ui-probe.log" 2>&1
+  res "ui probe exit=$?"
+  ui_results
   PROBE_PREFIX=(xvfb-run -a)
   PROBE_FLAGS=(--no-sandbox)
   res "== error-logs P2: main-process errors in Electron 44 (unpackaged)"
@@ -206,10 +213,23 @@ EOF
   sudo apparmor_parser -r /etc/apparmor.d/bwrap
   res "apparmor_parser exit=$?"
   sudo systemctl reload apparmor 2>&1 | tail -n 3
+  res "bwrap profiles in the kernel after (b): $(sudo cat /sys/kernel/security/apparmor/profiles 2>/dev/null | grep -E 'bwrap' | tr '\n' ';')"
   probe_app p3-b-bwrap-profile
+  res "AppArmor denials in the kernel log: $(sudo dmesg 2>/dev/null | grep -i 'apparmor="DENIED"' | tail -n 3 | cut -c1-240 | tr '\n' ';')"
+  # 26.04 ships a profile of the same name (bwrap-userns-restrict): (b) above may have been
+  # overwritten by it, so (d) unloads the system's one first.
+  if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
+    res "== P3 (d): (b) with the system's own bwrap profile unloaded first"
+    sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
+    res "unload exit=$?"
+    sudo apparmor_parser -r /etc/apparmor.d/bwrap
+    res "bwrap profiles in the kernel after (d): $(sudo cat /sys/kernel/security/apparmor/profiles 2>/dev/null | grep -E 'bwrap' | tr '\n' ';')"
+    probe_app p3-d-stock-unloaded
+  fi
   res "== P3 table (posture, reasons, echo, renderer seccomp, --no-sandbox switch)"
-  for label in p3-a-unchanged p3-c-sysctl0 p3-b-bwrap-profile; do
-    res "$(printf '%-20s' "$label") $(jq -c '{posture: .sandbox.posture.state, reasons: (.sandbox.reasons | map(.code)), echo: .sandbox.commands.echo.stdout, rendererSeccomp: .chromium.renderer.seccomp, noSandboxSwitch: .chromium.noSandboxSwitch}' "$OUT/$label.json" 2>&1 | head -n 2 | tr '\n' ' ')"
+  for label in p3-a-unchanged p3-c-sysctl0 p3-b-bwrap-profile p3-d-stock-unloaded; do
+    [ -f "$OUT/$label.json" ] || continue
+    res "$(printf '%-22s' "$label") $(jq -c '{posture: .sandbox.posture.state, reasons: (.sandbox.reasons | map(.code)), why: (.sandbox.reasons[0].detail // "" | .[0:400]), echo: .sandbox.commands.echo.stdout, rendererSeccomp: .chromium.renderer.seccomp, noSandboxSwitch: .chromium.noSandboxSwitch}' "$OUT/$label.json" 2>&1 | head -n 2 | tr '\n' ' ')"
   done
 }
 

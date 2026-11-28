@@ -125,6 +125,12 @@ phase_dev() {
   res "dev self-check exit=$?"
   tail -n 15 "$OUT/dev-probe.log" | cut -c1-300
   show_probe "$OUT/dev-probe.json" "development build"
+  res "== error-logs P3: UI errors seen in console-message, and a normal quit (unpackaged)"
+  rm -f "$OUT/ui-probe.json"
+  TENON_PROBE_UI=1 TENON_PROBE_OUT="$OUT/ui-probe.json" \
+    python3 "$PROBE/run-timeout.py" 120 pnpm exec electron . >"$OUT/ui-probe.log" 2>&1
+  res "ui probe exit=$?"
+  ui_results
   PROBE_PREFIX=()
   PROBE_FLAGS=()
   res "== error-logs P2: main-process errors in Electron 44 (unpackaged)"
