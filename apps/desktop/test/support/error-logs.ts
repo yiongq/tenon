@@ -13,18 +13,12 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { absolutePath } from '@tenon-app/kernel'
-// @ts-expect-error — log/app-log.ts does not exist until error-logs segment 1 is implemented
 import { createAppLog, type AppLog, type OpenResult } from '../../src/main/log/app-log.js'
 
-// @ts-expect-error — same module, re-exported for the tests
 export { appLog, createAppLog } from '../../src/main/log/app-log.js'
-// @ts-expect-error — same module, types
 export type { AppLog, OpenResult, RunningMarker } from '../../src/main/log/app-log.js'
-// @ts-expect-error — log/events.ts does not exist until error-logs segment 1 is implemented
 export type { ErrorSummary, LogEvent, LogLevel } from '../../src/main/log/events.js'
-// @ts-expect-error — log/redact.ts does not exist until error-logs segment 1 is implemented
 export { rememberingSecrets, summarizeError } from '../../src/main/log/redact.js'
-// @ts-expect-error — log/watch.ts does not exist until error-logs segment 1 is implemented
 export { logRouteFailures, watchRendererConsole } from '../../src/main/log/watch.js'
 
 /** The user's home and the application folder, as the log is told them (`open`'s `home`, `appDir`). */
