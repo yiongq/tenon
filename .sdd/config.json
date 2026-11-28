@@ -190,21 +190,6 @@
     },
     {
       "check": "pairs",
-      "file": "docs/features/claude-5-5-models/spec.md",
-      "message": "Changes: # 没有对应：# 的页头缺 Changed by: claude-#-#-models（§Provider 层）"
-    },
-    {
-      "check": "pairs",
-      "file": "docs/features/claude-5-5-models/spec.md",
-      "message": "Changes: # 没有对应：# 的页头缺 Changed by: claude-#-#-models（§对 #-provider-and-tape 的修补）"
-    },
-    {
-      "check": "pairs",
-      "file": "docs/features/claude-5-5-models/spec.md",
-      "message": "Changes: model-display-names 没有对应：model-display-names 的页头缺 Changed by: claude-#-#-models（§对 # 的修补「设置卡」）"
-    },
-    {
-      "check": "pairs",
       "file": "docs/features/model-display-names/spec.md",
       "message": "Changed by: presentation-r# 没有对应：presentation-r# 的页头缺 Changes: model-display-names"
     },
