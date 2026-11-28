@@ -629,6 +629,8 @@
       "snapshotted": "有快照，这一轮可以一键还原。",
       "unknown": "如果它改了东西，Tenon 没法替你撤回。",
       "unknownFile": "Tenon 没法替你撤回这次改动。",
+      "commandRestorable": "它在任务文件夹里改的文件一般能随这一轮还原；文件夹外的、联网发出的、.git 里的和被排除的文件撤不回。",
+      "commandRestored": "它在任务文件夹里改的文件能随这一轮还原；文件夹外的、联网发出的、.git 里的和被排除的文件撤不回。",
       "network": {
         "search": "搜索词会发到这台电脑之外。",
         "url": "网址会发给 {host}。"

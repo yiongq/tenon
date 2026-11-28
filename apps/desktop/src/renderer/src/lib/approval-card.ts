@@ -48,8 +48,17 @@ export function whyKey(card: Omit<SentenceCard, 'reversibility'>): string | null
   return reasonKey(card)
 }
 
-/** ④ First matching consequence: irreversible, online, then the remaining reversibilities. */
-export function undoKey(card: SentenceCard): string | null {
+/**
+ * ④ First matching consequence: irreversible, online, then the remaining reversibilities. A
+ * main-session command whose session snapshots the whole folder says its files in the task folder
+ * can usually come back with the round, and that nothing outside it can (command-undo-copy); a
+ * missing status reads as anything but `tree`.
+ */
+export function undoKey(
+  card: SentenceCard,
+  snapshotStatus?: 'tree' | 'warming' | 'file-only' | 'unavailable',
+  subtask?: boolean,
+): string | null {
   if (card.reversibility === 'revertible') return null
   if (card.reversibility === 'irreversible') return 'confirm.irreversible'
   if (card.kind === 'network') {
@@ -65,6 +74,13 @@ export function undoKey(card: SentenceCard): string | null {
   if (card.reversibility === 'unknown' && card.target.type === 'path') {
     return 'confirm.undo.unknownFile'
   }
+  if (
+    card.reversibility === 'unknown' &&
+    card.target.type === 'command' &&
+    subtask !== true &&
+    snapshotStatus === 'tree'
+  )
+    return 'confirm.undo.commandRestorable'
   return `confirm.undo.${card.reversibility}`
 }
 

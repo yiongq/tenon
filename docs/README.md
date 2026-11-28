@@ -13,6 +13,7 @@
 - [06](architecture/06-approval-modes/spec.md) · implemented · 加一个自动档：工作区里能还原的改动、关在沙箱里的命令不再问你；撤不回的、越出文件夹的、按规则拦下的照样问。 · 需要你：无。验收里看到的一处文案（命令行「没法替你撤回」与结算行「可还原」打架）记在总参考「以后再说」，owner 定验收后接…
 - [auto-tier-hardening](features/auto-tier-hardening/spec.md) · implemented · 在开「自动档」（06）之前，给 Tenon 自己的沙箱和权限检查补三道保护，堵住三个会让别人借你的身份执行代码、或把你的数据外带出去的缺口。 · 需要你：本轮无；lead 完成突变实跑核验后交 owner 验收，Status 只由 owner 决定。
 - [claude-5-5-models](features/claude-5-5-models/spec.md) · ready · Claude 5.5 两行与模型目录跟随最新 · 需要你：无
+- [command-undo-copy](features/command-undo-copy/spec.md) · ready · 命令的审批卡和展开的工具行，按快照的实情说命令的改动能不能还原；能还原时不再写「没法替你撤回」。 · 需要你：无。第 6 步真窗口验收要在你的 Mac 上起应用，到时先问你。
 - [custom-vendors](features/custom-vendors/spec.md) · implemented · 自定义厂商（M6） · 需要你：—
 - [model-display-names](features/model-display-names/spec.md) · implemented · 模型显示名 · 需要你：—
 - [presentation-r1](features/presentation-r1/spec.md) · implemented · 呈现修订第一轮（presentation-r1） · 需要你：—
@@ -63,7 +64,7 @@
 - 05 §已知限制与代价 ← auto-tier-hardening
 - custom-vendors §写入规则 的「新建」与「保存实例的 key」：第一次存 key ← presentation-r1
 - model-display-names §对 02 的修补「设置卡」 ← claude-5-5-models
-- presentation-r1 §审批卡 ← 05 ← 06 ← 06
+- presentation-r1 §审批卡 ← 05 ← 06 ← 06 ← command-undo-copy
 - presentation-r1 §结算行 ← 05
-- presentation-r1 §工具行 ← 05 ← 05 ← 06
+- presentation-r1 §工具行 ← 05 ← 05 ← 06 ← command-undo-copy
 - presentation-r1 §拦截回执 ← 06

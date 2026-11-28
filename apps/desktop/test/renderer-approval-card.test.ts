@@ -38,8 +38,22 @@ import {
   stopEvent,
 } from '@tenon-app/kernel/testing'
 
-// Only the connector catalogue is a live external store; all card markup and translations are real.
+// Only the connector catalogue and the session's snapshot read model are live external stores; all
+// card markup and translations are real. No snapshot status is read unless a test sets one.
 vi.mock('../src/renderer/src/runtime/mcp-store', () => ({ useMcp: () => ({ servers: [] }) }))
+const snapshots = vi.hoisted(() => ({
+  status: undefined as 'tree' | 'warming' | 'file-only' | 'unavailable' | undefined,
+}))
+vi.mock('../src/renderer/src/runtime/SnapshotProvider', () => ({
+  useSnapshotRounds: () => ({
+    sessionId: 'session-1',
+    data:
+      snapshots.status === undefined
+        ? null
+        : { ok: true, status: snapshots.status, rounds: [], incompleteRestores: [] },
+    refresh: async () => null,
+  }),
+}))
 
 type SentenceCard = Pick<
   ConfirmRequestInput,
@@ -741,3 +755,97 @@ it.each(['credential', 'auto-run', 'hardlink'] as const)(
     }
   },
 )
+
+const COMMAND_CARD: SentenceCard = {
+  kind: 'command',
+  reason: 'command',
+  target: TARGET_BY_KIND.command,
+  reversibility: 'unknown',
+  facts: {},
+}
+const RESTORABLE = {
+  'zh-CN':
+    '它在任务文件夹里改的文件一般能随这一轮还原；文件夹外的、联网发出的、.git 里的和被排除的文件撤不回。',
+  en: "Files it changes in the task folder can usually be restored with this round; anything outside the folder, sent online, in .git, or excluded can't.",
+} as const
+const OLD_COMMAND_UNDO = {
+  'zh-CN': '如果它改了东西，Tenon 没法替你撤回。',
+  en: "If this changes anything, Tenon can't undo it.",
+} as const
+
+async function renderWithSnapshot(
+  status: typeof snapshots.status,
+  card: SentenceCard,
+  i18n: I18n,
+  value = pending(card),
+): Promise<string> {
+  snapshots.status = status
+  try {
+    return await render(card, i18n, value)
+  } finally {
+    snapshots.status = undefined
+  }
+}
+
+it('command-undo-copy 验收 1: a main-session command card under a whole-folder snapshot says its task-folder files can usually be restored and nothing outside the folder can, never the snapshot sentence', async () => {
+  // A manual-mode command card, one auto mode still asks about (06 autoAsk), a rerun outside the
+  // sandbox and one with the sandbox unavailable: the sentence names the task folder and says
+  // nothing outside it comes back, so it holds for all of them.
+  for (const card of [
+    COMMAND_CARD,
+    { ...COMMAND_CARD, facts: { autoAsk: 'redirect' } },
+    { ...COMMAND_CARD, reason: 'elevated' as const },
+    { ...COMMAND_CARD, facts: { sandbox: 'unavailable' } },
+  ]) {
+    expect(undoKey(card, 'tree', false)).toBe('confirm.undo.commandRestorable')
+    for (const i18n of [zh, en]) {
+      const locale = i18n.language as keyof typeof RESTORABLE
+      // oxlint-disable-next-line no-await-in-loop -- each card in both locales
+      const html = await renderWithSnapshot('tree', card, i18n)
+      const undo = content(html, 'approval-undo')
+      expect(undo?.attributes).toContain('data-copy-key="confirm.undo.commandRestorable"')
+      expect(undo?.text).toBe(RESTORABLE[locale])
+      expect(html).not.toContain(i18n.t('confirm.undo.snapshotted' as never))
+    }
+  }
+})
+
+it('command-undo-copy 验收 2: other snapshot states, an unread status, a subtask card and an irreversible command keep their sentences; other kinds are unchanged', async () => {
+  for (const status of ['warming', 'file-only', 'unavailable', undefined] as const) {
+    expect(undoKey(COMMAND_CARD, status, false)).toBe('confirm.undo.unknown')
+    for (const i18n of [zh, en]) {
+      // oxlint-disable-next-line no-await-in-loop -- each status in both locales
+      const undo = content(await renderWithSnapshot(status, COMMAND_CARD, i18n), 'approval-undo')
+      expect(undo?.attributes).toContain('data-copy-key="confirm.undo.unknown"')
+      expect(undo?.text).toBe(OLD_COMMAND_UNDO[i18n.language as keyof typeof OLD_COMMAND_UNDO])
+    }
+  }
+  // A subtask's card: its callKey is not the anchor row's.
+  expect(undoKey(COMMAND_CARD, 'tree', true)).toBe('confirm.undo.unknown')
+  const subtask = { ...pending(COMMAND_CARD), callKey: 'call-2', anchorCallKey: 'call-1' }
+  const subtaskUndo = content(
+    await renderWithSnapshot('tree', COMMAND_CARD, zh, subtask),
+    'approval-undo',
+  )
+  expect(subtaskUndo?.attributes).toContain('data-copy-key="confirm.undo.unknown"')
+  // An irreversible command stays 「撤不回。」 under a whole-folder snapshot.
+  const irreversible = { ...COMMAND_CARD, reversibility: 'irreversible' as const }
+  expect(undoKey(irreversible, 'tree', false)).toBe('confirm.irreversible')
+  expect(
+    content(await renderWithSnapshot('tree', irreversible, zh), 'approval-irreversible')?.text,
+  ).toBe('撤不回。')
+  // Every other kind and every other command reversibility reads exactly as without a status.
+  for (const kind of confirmKindSchema.options) {
+    for (const reversibility of reversibilitySchema.options) {
+      if (kind === 'command' && reversibility === 'unknown') continue
+      const card: SentenceCard = {
+        ...BASE,
+        kind,
+        reason: 'default',
+        target: TARGET_BY_KIND[kind],
+        reversibility,
+      }
+      expect(undoKey(card, 'tree', false), `${kind}/${reversibility}`).toBe(undoKey(card))
+    }
+  }
+})

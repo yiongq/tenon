@@ -20,6 +20,7 @@ import {
 import { APPROVAL_CLICK_GUARD_MS, allowLabelKey, scopeKey } from '@/lib/approval-keys'
 import { hostOfUrl } from '@/lib/url-host'
 import { useMcp } from '@/runtime/mcp-store'
+import { useSnapshotRounds } from '@/runtime/SnapshotProvider'
 import { tx } from '@/lib/tx'
 import { visible } from '@/lib/visible'
 import type { PendingCard } from '@/runtime/session-store'
@@ -96,8 +97,8 @@ export function ApprovalCard(props: {
   const [showChange, setShowChange] = useState(change?.expanded === true)
   const hints = keyHints(card)
   const why = whyKey(card)
-  const undo = undoKey(card)
   const subtask = props.pending.callKey !== props.pending.anchorCallKey
+  const undo = undoKey(card, useSnapshotRounds().data?.status, subtask)
   const guarded = (): boolean => Date.now() - props.since < APPROVAL_CLICK_GUARD_MS
   const answer = (decision: 'allow' | 'deny'): void => {
     if (!guarded()) props.onRespond(decision)
