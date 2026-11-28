@@ -66,7 +66,7 @@ export interface ErrorSummary {
   readonly code?: string              // error.code，如 ENOENT
   readonly message: string            // 先脱敏，再截到 500 字
   readonly frames?: readonly string[] // 栈的前 10 帧，每帧先脱敏再截到 300 字
-} // 不取 cmd、spawnargs、env 等属性；cause 链只取每层的 name 与 code
+} // 不取 cmd、spawnargs、env 等属性；cause 链不读
 export type LogEvent =
   | { readonly event: 'app.start'; readonly packaged: boolean; readonly platform: string; readonly arch: string; readonly userData: string }
   | { readonly event: 'app.unclean-exit'; readonly startedAt: string | null; readonly version: string | null }
@@ -214,7 +214,7 @@ export interface McpPoolOptions { /* 已有成员不动 */ readonly onSecret?: (
 - `renderer.error`：所有窗口合起来算一个来源 `renderer`（合并计数的那一行也算一行）。
 - `main.uncaught`：一个来源，每窗最多 600 行。
 - 不限量的九种：`app.start`、`app.unclean-exit`、`app.startup-failed`、`app.quit`、`window.shown`、`sandbox.posture`、`sandbox.helpers`、`process.gone`、`log.dropped`。补写 `log.dropped` 每窗每个来源至多一行，所以它刷不起来。
-- 每次轮转后，在新文件开头抄一遍本次启动已写的 `app.start`、`app.unclean-exit`、`window.shown`、`sandbox.posture`、`sandbox.helpers`。不给别的行留保底：要保证得按来源分字节额度或另开文件，超出 D20；照实写进已知限制。
+- 每次轮转后，在新文件开头抄一遍本次启动已写的 `app.start`、`app.unclean-exit`、`window.shown`、`sandbox.posture`、`sandbox.helpers`，每种只抄最近的一条（窗口可以开很多个，全抄会让抄写本身没有上界）。不给别的行留保底：要保证得按来源分字节额度或另开文件，超出 D20；照实写进已知限制。
 
 **怎么写**
 - 文件：当前写 `main.jsonl`；加上下一行会超过 5 MiB 时，先轮转再写：它改名 `main.1.jsonl`、原来的 `main.1` 改名 `main.2`、最旧的删掉。
@@ -222,6 +222,12 @@ export interface McpPoolOptions { /* 已有成员不动 */ readonly onSecret?: (
 - 运行标记：`open` 读旧标记，不是 `none` 就自己写 `app.unclean-exit`（读不出时两个字段为 null），再写新标记。`will-quit` 时 `close()`。启动失败走 `app.exit(1)`，不删标记。
 - SIGTERM 有三种情形（E7）：srt 装上它的信号监听之前，Electron 把 SIGTERM 当成正常退出处理，写 `app.quit`；srt 装上之后、Tenon 的 `registerSandboxSignals` 登记之前，SIGTERM 只让 srt 复位，进程不退出；登记之后，走正常退出。
 - 上限：单行 16 KiB，字符串字段 2000 字，超出截断并写明截了多少，如 `…(+5120)`（留下的部分不超过上限，这个标记加在后面、不算在上限里）；先脱敏再截断。整行仍超过 16 KiB 时，把当时最长的字符串字段再截一半，直到放得下。换行与控制字符由 JSON 转义，一条不会拆成两行。
+- 脱敏、截断都按字段做，做完再拼成一行：登记值和通用格式只在字符串字段的值上替换，不在拼好的整行 JSON 上替换（登记进来的值如果长得像日志格式本身，整行替换会把之后每一行打碎）。字段以截断结尾、且结尾恰好是某个登记值开头的 8 个字符以上时，这一段也换掉（上游先截过的文字，比如 kernel 截到 500 字的 detail，会留下机密的前半段）。
+- 一行里除了 JSON 本来就转义的控制字符，U+0080–U+009F、U+2028、U+2029 也写成 `\uXXXX` 转义，免得按行读的工具把一行看成两行。
+- 缩到最短仍超过 16 KiB 的行不写原事件：改写一行 `log.dropped`，`source` 是原事件名，`count` 是 1。开日志前缓存溢出的那一行 `log.dropped`，`source` 是 `buffer`。值的嵌套深度、数组长度超过实现里的固定上限时照截断处理。
+- 轮转失败（旧文件改不了名、名字被占）：不回到已满的文件接着写。这一行丢掉并计进 `log.dropped`（`source` 是 `rotate`），只往 stderr 报一次，过一分钟再试轮转；`main.jsonl` 任何时候不超过 5 MiB 加一行。
+- 开发构建的 stderr 镜像排在限量之前：被限量丢掉的行终端里照样看得到；`close` 之后写的行也镜像。
+- 登记表有上限：最多 10 000 个值，满了丢最早登记的；重复登记同一个值不占位置。
 - 写失败：只往 stderr 报一次，之后照常运行，不抛。
 
 **启动失败**（D15）：`index.ts` 末尾 `startSingleInstance(...).catch` 只调 `reportStartupFailure`：先记 `app.startup-failed`（日志还没开就先 `openFallback`），再等 ready，再弹框，再 `exit(1)`。提示框的标题与正文走 i18n，正文写 Tenon 没能启动与日志文件夹的完整路径（主目录写成 `~`）；日志写不进去时写「日志也没能写下」和错误名。
@@ -244,6 +250,9 @@ export interface McpPoolOptions { /* 已有成员不动 */ readonly onSecret?: (
 - 自由文字字段可能带回内容片段，三层脱敏挡不住：provider 的 detail（厂商回显，截到 500 字）、界面报错的第一行（300 字）、各模块记下的 `error.message`，其中 kernel `loop/batch.ts` 的 `withinWriteWait`（停下之后工具又抛的错，MCP server 的报错文字）与 `loop/recovery.ts` 记下的 Tape 解析错误（V8 的报错带一段原文）是已知两处（E8）。机密照样被换掉，对话片段换不掉。
 - 脱敏只认登记值与通用格式：从没被读到的机密、格式少见的令牌会漏；`envs` 里的普通配置值也会被换成 `[redacted]`。主目录写成 `~` 只藏住用户名，项目名和文件名照记。
 - 文件保护只到这一步：打开时检查挡得住已有的链接、硬链接、别人的文件和被事先占住的临时文件名；挡不住检查与打开之间同一用户换掉目录。MCP 日志的写入照 03 不做链接检查，只在启动改权限时检查。前提是能写 profile 目录，沙箱生效时 profile 目录在拒写名单里（E9）。
+- 登记表满 10 000 个之后，最早登记的值不再被换掉：正常使用到不了这个数，一个每次都换令牌的远程 MCP 授权服务器可以把它灌满，这时靠通用格式那一层兜底。
+- `ipc.failed` 的 `message` 可能带出存储里一小段原文（解析失败时的报错文字）；`kernel`、`host` 两个来源的行有一部分能被模型输出或 MCP server 触发，刷满它们各自的每分钟 60 行后，同一来源的其他行这一分钟会丢。自定厂商的模型 id 这类外来文字原样进文本字段，能在字段里拼出看起来像 `key=value` 的片段，但出不了字段。
+- 没登记的写法：Basic 认证里错位的 base64、表单编码、十六进制写法的机密不换。
 - 沙箱不可用时（Ubuntu 默认的 AppArmor 设置下就是这样），你放行过的命令读得到日志；kernel 的文件工具不论沙箱状态都拦（E1）。
 - 限量之后，刷屏那一分钟里的大部分行会丢。有人按上限持续刷屏时，本次启动前面的、不在「抄过去」名单里的行会被轮转掉。第二次复审按截短来源文件名之前的写法算过（另记）：界面与 Linux 沙箱观测器一起刷，11–19 分钟；再加一条把输入原样写进错误说明的路由，约 7 分钟；外部输入若能触发主进程没接住的错（每窗 600 行），2–8 分钟。
 - 同步写会占主进程一点时间。
@@ -289,3 +298,4 @@ export interface McpPoolOptions { /* 已有成员不动 */ readonly onSecret?: (
 - 2026-11-28 · 给你看的一页「要你定的」 · 澄清：补上 60 行上限的两处例外（600 行、九种不限量），原先只写在决策记录里 · PR #98
 - 2026-11-28 · 验收 17 · 澄清：「启动是第一行」指这次启动的第一行，`app.unclean-exit` 可以在它前面 · PR #98
 - 2026-11-28 · §脱敏、§记什么「界面报错」、§日志怎么写、§接口、验收 3 · 澄清（测试作者指出说不清的地方）：`mcp.add` 更正为 `mcp.save`；`repeats` 第一条是 1、补写行是总次数；来源取路径最后一段；截断标记不算在上限里；`open` 的 `dir` 是日志文件夹本身、不存在就建；开日志前的缓存最多 1000 行、超出的丢后来的；运行标记的临时文件名是 `running.json.tmp` · PR #98
+- 2026-11-28 · §日志怎么写、§接口、§已知限制与代价 · 段一评审指出的收紧与澄清：脱敏与截断按字段做、结尾残段也换；多转义几种换行字符；放不下的行改写成 `log.dropped`；轮转失败不回写已满的文件；镜像排在限量之前；抄写每种只抄最近一条；登记表上限 10 000；`ErrorSummary` 不读 cause 链；已知限制补三条 · PR #101
