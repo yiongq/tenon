@@ -343,3 +343,12 @@
 - [建议] Sonnet 5、Haiku 4.5 的用途句（数据表和开放问题 4 定的「上一代 Sonnet（旧版）」「上一代 Haiku（旧版）」）没有用例钉住值；验收 8 只查键在不在和占位符，验收 9 只看两新行 · 证据：突变 R6 把两份 locale 的这两句改回本 spec 之前的值，相关与全量都绿，e2e 里也没有用例读这两句 · 不修：只算建议
 - [建议] 验收 2「关思考且 tools 非空本地拒绝」只测了 effort high 一种 · 证据：突变 R15（拒绝条件加 `&& req.effort !== undefined`）相关与全量都绿 · 不修：只算建议
 - [建议] 总参考「以后再说」新加的第一条（Haiku 4.5 公告）写「新开一步」，没写在哪里开：原 plan 写「在这里新开一步」，spec §Haiku 4.5 写「到时在本 spec 的 plan「以后」记一步」，plan 没有这一节，docs/spec-driven-dev.md §6 又说这一节的条目要做先写 spec · 无证据 · 不修：只算建议
+
+## 评审处置 · 2026-11-28（审过 b93481c 那一轮）
+
+- [major] 验收 16 只断言了 anthropic 一行的 `family`、`familyNameKey` · 已修 8bd3ba3：model-selection.test.ts「claude-5-5-models 验收 16」加智谱四行的 `family` 与 `familyNameKey`（写死期望值，不从被测代码算）；作者在工作区打上突变 R5（`menuRow` 条件加 `|| definition.wire === 'openai-chat'`），这例变红，已还原。
+- [建议] 第 14 步记录里验收 13 写成 19 例 · 已修（本条所在提交）：见下面补记，原记录不改（log 只往后追加）。
+- [建议] 两行旧版的用途句没有用例钉住 · 已修 8bd3ba3：copy-coverage.test.ts 加「keeps the purpose sentences open question 4 chose for the two legacy rows — claude-5-5-models 验收 8」，两份 locale 四句写死；突变 R6（改 zh-CN 那句）变红，已还原。
+- [建议] 关思考带 tools 只测了 effort high · 已修 8bd3ba3：thinking-shapes.test.ts 那例改成 low、medium、high 与不传四种都要本地拒绝；突变 R15（拒绝条件加 `&& req.effort !== undefined`）变红，已还原。
+- [建议] 「以后再说」的 Haiku 4.5 一条没写在哪里新开一步 · 已修 32d5b65：改成「先写一份 lite spec 再改」。
+- 补记：「验收核对 · 2026-11-28（第 14 步）」里「13 definitions.test.ts、model-families.test.ts 19 例」应为 10 例（model-families.test.ts 9 例加 definitions.test.ts「验收 1、13」1 例）；19 是把 describe 标题里的「验收 13」也按完整标题算进去了。其余数字评审核过无误。
