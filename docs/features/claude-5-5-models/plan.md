@@ -4,7 +4,7 @@
 
 ## 当前 / 需要你
 
-当前：第 0.1、1–13 步做完（第 12 步官方 key live 冒烟全过；第 13 步页头成对，PR #99，评审见 log）。下一步第 14 步：对照验收 1–19 逐条核对，全量 e2e 走 CI。
+当前：第 0.1、1–14 步做完（第 14 步按 CI 报告逐条核对，trace 不再报本 spec，全量 e2e 全过）。下一步第 15 步：清理，把「上线后跟进」与 Open 挪进「以后再说」，再派评审。
 需要你：① 合 PR #100（删 `.sdd/config.json` 里本 spec 三条已失效的 pairs 已知项）。规则原文：plan 第 13 步「若报 config 里这份 spec 的已知项失效，删它们要改 `.sdd/config.json`（门禁文件），那一处交 owner 合」。顺序：#97 已于 2026-11-28 合入；等 #99 合入再合 #100，先合会让 dev 上 pairs 拦 3 条。改的代价：合一个只删 15 行的门禁文件 PR；不改的代价：这三条留着，以后有人只删掉 01 的 `§Provider 层` 或 02 的 `§对 01-provider-and-tape 的修补` 那一条 `Changed by`，spec-check 不会拦（#99 评审突变 M1b、M1c 存活；删整行照样会拦）。② 2026-10-23 交 owner、还没回的一条建议（log「审过 4550a17」）：docs/spec-driven-dev.md「本项目补充」第 9 条仍写「厂商现状表……本次不创建」，已过时（docs/reference/vendors.md 已建）；改这一节要你点名批准，改的代价是改一行说明，不改的代价是这条说明与仓库现状对不上。
 授权：本 spec 由 Codex 实现的 PR，lead 评审、CI 绿后由 lead 开自动合并；碰门禁文件、涉及花费或安全取舍、改 Status 时仍问 owner · 到本 spec `implemented` 为止 · 「一路推进 (Recommended)」（2026-10-23 问卷，题目「Codex 的 PR 经我评审、CI 绿了之后，我自己开自动合并，还是每个都先问你？」）
 
@@ -133,7 +133,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
   - 本 spec 页头：`Amends:` 改写成 v2 的 `Changes:`，每条只带一个 §（spec-check 每个目标只取第一个 §），多条用「；」隔开，例如 `[02-agent-loop](../../architecture/02-agent-loop/spec.md) §主进程与 kernel 的循环接口（增补：`resolveChoice` 的问询只增 `previousModel`）`；带 §点名 项的条目（(a)(b)(f)(g) 落到的节）不标「增补」，括注写点名与 owner 的确认；`Replaces:` 改写成 `Changes: 02 §模型菜单与输入框（替换：「更多模型 ›」的括注）`。改写只换格式，指到的节与内容不变，记一行修订。
   - 01、02、model-display-names 页头为本 spec 的每条 `Changes` 各写一条 `Changed by: claude-5-5-models（§<节名>）`，逐条成对；02 那几条的括注点出 §点名 (a)(b)(f)(g) 与 owner 的确认（(g) 是 owner 2026-10-15 经问卷确认，spec `Revisions:` ㊴；(e) 只在 live 失败、owner 确认时补）；01 那条点出 (f)（验收 6 的读法）。custom-vendors 与 presentation-r1 不加（spec `Revisions:` ㉘、㉛，`Related:`）。
   - 跑 `python3 .sdd/spec-check.py`：pairs 拦 0 条。若报 config 里这份 spec 的已知项失效，删它们要改 `.sdd/config.json`（门禁文件），那一处交 owner 合。
-- [ ] 14. 对照验收 1–19 逐条核对（验收 19 按它写的条件），跑 `python3 .sdd/spec-check.py` 确认 trace 不再报本 spec 的验收没有用例点名，跑一次「命令」里的全量 e2e（走 CI 草稿 PR 或 Lima VM，不在 owner 的 Mac 上起窗口），结果记进 log.md。
+- [x] 14. 对照验收 1–19 逐条核对（2026-11-28 做完：按 PR #99 的 CI 报告，1–11、13–19 都有点名用例且全过，12 见第 12 步 live，全量 e2e 278 过 0 挂；log「验收核对 · 2026-11-28」）（验收 19 按它写的条件），跑 `python3 .sdd/spec-check.py` 确认 trace 不再报本 spec 的验收没有用例点名，跑一次「命令」里的全量 e2e（走 CI 草稿 PR 或 Lima VM，不在 owner 的 Mac 上起窗口），结果记进 log.md。
 - [ ] 15. 清理：临时探针、调试输出、live 记录里不该留的内容；把「上线后跟进」与 Open 挪进总参考「以后再说」或写明已定（要在派评审之前做）；`git status` 干净。
 - [ ] 16. owner 验收 → 改 Status
 
@@ -145,7 +145,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 
 ## 交接
 
-- 2026-11-28：第 12、13 步做完。第 12 步是 PR #97（评审两轮，审过 a5356d1 通过，2026-11-28 已合入 dev）；第 13 步是 PR #99（叠在 #97 上，评审见 log），删失效已知项的门禁文件改动另在 PR #100，由 owner 在 #99 之后合。下一步第 14 步：逐条核对验收 1–19、跑 spec-check 确认 trace、全量 e2e 走 CI 草稿 PR；第 15 步清理后派评审。
+- 2026-11-28：第 12、13、14 步做完（PR #97、#99 已合入 dev，第 14 步记录在 log「验收核对 · 2026-11-28」）。PR #100（删失效已知项，门禁文件）等 owner 合。下一步第 15 步：清理临时探针与调试输出，把「上线后跟进」与 Open 挪进总参考「以后再说」（要在派评审之前做），`git status` 干净，然后派独立评审，最后 owner 验收改 Status。
 
 ## Open
 
