@@ -4,8 +4,8 @@
 
 ## 当前 / 需要你
 
-当前：第 0.1、1–15 步做完；最终独立评审两轮，第二轮（log「审过 902d979」）通过，处置都已填。下一步：第 16 步 owner 验收。
-需要你：① 验收本 spec：同意就说「claude-5-5-models 改 implemented」，我再改 Status 与 Approved。② 2026-10-23 交 owner、还没回的一条建议（log「审过 4550a17」）：docs/spec-driven-dev.md「本项目补充」第 9 条仍写「厂商现状表……本次不创建」，已过时（docs/reference/vendors.md 已建）；改这一节要你点名批准，改的代价是改一行说明，不改的代价是这条说明与仓库现状对不上。
+当前：implemented（2026-11-28 owner「claude-5-5-models 改 implemented」）。第 0.1、1–16 步都做完。
+需要你：2026-10-23 交 owner、还没回的一条建议（log「审过 4550a17」）：docs/spec-driven-dev.md「本项目补充」第 9 条仍写「厂商现状表……本次不创建」，已过时（docs/reference/vendors.md 已建）；改这一节要你点名批准，改的代价是改一行说明，不改的代价是这条说明与仓库现状对不上。
 授权：本 spec 由 Codex 实现的 PR，lead 评审、CI 绿后由 lead 开自动合并；碰门禁文件、涉及花费或安全取舍、改 Status 时仍问 owner · 到本 spec `implemented` 为止 · 「一路推进 (Recommended)」（2026-10-23 问卷，题目「Codex 的 PR 经我评审、CI 绿了之后，我自己开自动合并，还是每个都先问你？」）
 
 ## 开工前读
@@ -135,7 +135,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
   - 跑 `python3 .sdd/spec-check.py`：pairs 拦 0 条。若报 config 里这份 spec 的已知项失效，删它们要改 `.sdd/config.json`（门禁文件），那一处交 owner 合。
 - [x] 14. 对照验收 1–19 逐条核对（2026-11-28 做完：按 PR #99 的 CI 报告，1–11、13–19 都有点名用例且全过，12 见第 12 步 live，全量 e2e 278 过 0 挂；log「验收核对 · 2026-11-28」）（验收 19 按它写的条件），跑 `python3 .sdd/spec-check.py` 确认 trace 不再报本 spec 的验收没有用例点名，跑一次「命令」里的全量 e2e（走 CI 草稿 PR 或 Lima VM，不在 owner 的 Mac 上起窗口），结果记进 log.md。
 - [x] 15. 清理：临时探针、调试输出、live 记录里不该留的内容；把「上线后跟进」与 Open 挪进总参考「以后再说」或写明已定（要在派评审之前做）；`git status` 干净。（2026-11-28 做完：本 spec 碰过的 47 个代码文件里没有调试输出、`.only` 或临时标记；live 原始记录在仓库外、核过不含 key；「上线后跟进」三条挪进总参考「以后再说」，Open 写成（无）；`git status` 干净）
-- [ ] 16. owner 验收 → 改 Status
+- [x] 16. owner 验收 → 改 Status（2026-11-28「claude-5-5-models 改 implemented」）
 
 ## 上线后跟进
 
@@ -143,7 +143,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 
 ## 交接
 
-- 2026-11-28：第 12–15 步做完，PR #97、#99、#100、#102 都已合入 dev；最终评审记录与评审后补的测试（8bd3ba3）随本 spec 最后一个 PR 合入。最终评审两轮：审过 b93481c 不通过（1 条 major，已补测试），审过 902d979 通过。下一步：owner 说「claude-5-5-models 改 implemented」后改 Status（spec 的「开放问题（已定）」一节会让 later 检查报一条警，那一节记的是已定的选法、正文到处引用，保留）。
+- 2026-11-28：PR #97、#99、#100、#102、#103 都已合入 dev，最终评审两轮通过（log「审过 902d979」），owner 说「claude-5-5-models 改 implemented」，Status 改好。本 spec 已收尾；之后对模型表、跟随最新或这两行的改动另写新 spec（上线后跟进三条在总参考「以后再说」）。
 
 ## Open
 
