@@ -272,3 +272,11 @@
 - [建议] `Changed by` 括注里夹着说明，spec-check 解析出「验收标准，第 6 条的读法，§点名 (f」这类节名，只靠前缀匹配才配上；第 3、4、6、9、10 条 Changes 的括注里有第二个 §，和 plan「每条只带一个 §」的字面说法有出入 · 证据：用 parse_ref_entry 解析新加的 Changed by 与 Changes 得到的结果；spec-check 只取第一个 §，眼下不受影响 · 待作者处置
 - [建议] §点名 正文还写着 `Amended by:`，表 (f) 行写着 `Amends:`，本步之后页头已没有这两个键 · 证据：spec.md §点名 首段与 (f) 行原文；spec-check 当别名处理，检查不受影响 · 待作者处置
 - [建议] `Replaces:` 的理由删掉后，§替换 02 的表现层条款 没写这条为什么在表现层范围内 · 无证据 · 不修：只算建议
+
+## 评审处置 · 2026-11-28（审过 38e94bf 那一轮）
+
+- [blocker] 新 `Changes:` 一行超过 600 字符 · 已修 b0a3eb2：按目标分四行（336、466、237、55 字符），pairs 0 拦、超长警消失。
+- [major] config 里本 spec 的三条 pairs 已知项已失效 · 交 owner：删这三条的提交 c200809 在 PR #100（`.sdd/config.json` 是门禁文件，不开自动合并；要在 #99 合入之后合，先合的话 dev 上配对还不存在会拦）。在本分支上删掉后没有多出拦，核过。
+- [建议] spec-check 只按节前缀配对、不查「增补」 · 不修：那是 sdd skill 的工具，不在本仓库改；本步 11 对评审已人工核过。
+- [建议] 括注里夹着说明、第二个 § · 已修 b0a3eb2：本 spec 的 `Changes` 括注里的点名不再带 §。01、02 已加的那两行 `Changed by` 没动：implemented 页头已加的行再改会被 frozen 拦（pre-commit 实测），按节前缀照样配上。
+- [建议] §点名 正文还写 `Amended by:`、`Amends:` · 已修 b0a3eb2：改成 `Changed by:`、`Changes:`，修订记录同一行写明。
