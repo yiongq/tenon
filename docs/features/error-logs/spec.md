@@ -88,7 +88,7 @@ export type OpenResult =
   | { readonly ok: true; readonly previous: 'none' | 'unreadable' | RunningMarker } // 不是 none 时 open 自己写 app.unclean-exit
   | { readonly ok: false; readonly reason: string }                                // 写不进去：照常运行，只往 stderr 报一次
 export interface AppLog {
-  open(dir: AbsolutePath, q: {
+  open(dir: AbsolutePath, q: {     // dir 就是 `<profileDir>/logs`；不存在就建成 0700
     readonly version: string      // app.getVersion()
     readonly packaged: boolean    // app.isPackaged；只有开发构建镜像到 stderr
     readonly home: AbsolutePath   // 写成 ~
@@ -179,7 +179,7 @@ export interface McpPoolOptions { /* 已有成员不动 */ readonly onSecret?: (
 - 每个字符串字段先脱敏、再截断；整行序列化后再过一遍脱敏；登记值按长度从长到短替换；应用目录先于主目录替换（由测试守）。
 - 主进程里的 `HostSecrets` 只有一个，在交给 host 之前包上 `rememberingSecrets`，`get` 的每一次读出都登记；`apps/desktop/src/main` 里别处不 new 钥匙串或内存钥匙串（由测试守：静态扫描 `new KeychainSecrets`、`new MemorySecrets` 只出现在 `host/index.ts`）。
 - 应用日志与运行标记只在 `<profileDir>/logs/` 下，路径里带 tenantId；不调 `app.setAppLogsPath`，不写 `app.getPath('logs')`（D17；由测试守）。
-- 打开日志前确认 `logs/` 是自己的真目录（不是链接、属主是自己），改成 0700；`main.jsonl` 以追加、不跟随符号链接打开后，必须是普通文件、只有一个硬链接、属主是自己，再改成 0600；运行标记的临时文件先删掉同名的旧名字（只删名字本身，不跟随链接），再以排他创建、不跟随符号链接、0600 写出并改名；运行标记写不出来，只影响下次的「上次没有正常退出」，日志照写。读旧标记时以不跟随符号链接、不阻塞的方式打开，确认是普通文件且不超过 4 KiB。目录或日志文件检查不过，才当「写不进去」（D20；由测试守）。
+- 打开日志前确认 `logs/` 是自己的真目录（不是链接、属主是自己），改成 0700；`main.jsonl` 以追加、不跟随符号链接打开后，必须是普通文件、只有一个硬链接、属主是自己，再改成 0600；运行标记的临时文件（`running.json.tmp`）先删掉同名的旧名字（只删名字本身，不跟随链接），再以排他创建、不跟随符号链接、0600 写出并改名；运行标记写不出来，只影响下次的「上次没有正常退出」，日志照写。读旧标记时以不跟随符号链接、不阻塞的方式打开，确认是普通文件且不超过 4 KiB。目录或日志文件检查不过，才当「写不进去」（D20；由测试守）。
 - 改已有 MCP 日志的权限时，以不跟随符号链接的方式打开，确认是自己的普通文件、只有一个硬链接后再改；不是就跳过（D18；由测试守）。
 - kernel 不碰日志文件，只经已有的 `log` 回调交出一行字，经 `onSecret` 交出机密（AGENTS.md「Hard rules」第 1 条；由 lint 守）。
 - 日志相关的改动不新增 IPC 通道，不改 `packages/contracts`（AGENTS.md「Hard rules」第 3 条；没自动化，靠评审）。
@@ -196,14 +196,14 @@ export interface McpPoolOptions { /* 已有成员不动 */ readonly onSecret?: (
 - 模型请求失败（error）：kernel `loop/run.ts` 在一次尝试以 `error` 结束时经 `ctx.log` 写 `[provider] run <runId> attempt failed: provider=<id> model=<id> code=<code> status=<status 或 -> providerCode=<码或 -> retryable=<true|false> detail=<detail>`。detail 是 kernel 已脱敏、截到 500 字的那段，01 定它「只进日志」。
 - 进程退出（error）：`render-process-gone` 记 `process: 'renderer'`；`child-process-gone` 记 `details.type` 与 `name`；`reason` 为 `clean-exit` 的不记（E4、P3）。
 - 主进程没接住的错（error）：异常只听 `uncaughtExceptionMonitor`，记来源与错误摘要，Electron 自己的弹框与「不退出」照旧；单独的 Promise 拒绝今天到不了它（P2），另加一个只记一行的 `unhandledRejection` 监听。拒绝今天就不弹框、不退出，加了照旧。加了监听之后，终端里原来那行英文警告与进程的退出码会不会变，探针没测（开放问题 1）。
-- 界面报错（error，D8；P3 实测三种错都以 error 级出现）：每个窗口的 `webContents` 上听 `console-message`，只取级别为 error 的：第一行先脱敏再截到 300 字；来源只留文件名（去掉查询串与 `#` 之后，截到 200 字）与行号。第一条立即写出；之后连续相同的只计数，内容变了、这一分钟过去或 `close` 时，补写一行带 `repeats` 的（P3）。
+- 界面报错（error，D8；P3 实测三种错都以 error 级出现）：每个窗口的 `webContents` 上听 `console-message`，只取级别为 error 的：第一行先脱敏再截到 300 字；来源只留文件名（路径的最后一段，去掉查询串与 `#` 之后，截到 200 字）与行号。第一条立即写出，`repeats` 是 1；之后连续相同的只计数，内容变了、这一分钟过去或 `AppLog.close()` 时，补写一行，`repeats` 是这一串的总次数（含第一条）；只出现一次的不补写（P3）。
 - 不记：对话内容（消息、回复、思考、工具参数与结果）、完整命令行与环境变量、错误对象的 `cmd`、`spawnargs`、`env`、请求头、子进程输出的正文（MCP 的照旧进它自己的日志）。
 
 **写入口**（验收 3、4 的测试按这张表逐项注入）：`LogEvent` 的每一种；`line`；开日志之前的内存缓存；轮转出来的 `main.1.jsonl`、`main.2.jsonl`；轮转后抄过去的行；`running.json`。stderr 镜像只在开发构建里有，同样已脱敏，不算日志文件。测试用一张 `satisfies Record<LogEvent['event'], …>` 的哨兵表，新增一种事件不补哨兵就过不了类型检查。
 
 **脱敏**（D16）：三层。
 1. 只收声明过的字段；错误只留 `ErrorSummary`。
-2. 登记值：主进程每次读到密钥值都当场登记。登记点是 ① `host.secrets` 的每一次 `get` 读出（包括启动后第一次读上一次运行存下的 key）与每一次 `set` 写入（`rememberingSecrets`；provider key、自定厂商 key、MCP 的 `env_keys` 与静态头都经它）；② 开发构建从环境变量回落取到的密钥（`apps/desktop/src/main/provider.ts` 解析出 `source: 'env'` 的那一刻，名字来自 `DEV_ENV_FALLBACK`）；③ kernel 连接池往某台 server 的脱敏表里加的每一个值，经 `onSecret` 报出，包括从分片拼出的整段 OAuth 令牌、refresh token 与 client secret（D19）；④ MCP server 配置里 `envs` 的值，desktop 每次把 MCP 配置交给连接池时（`mcp/runtime.ts` 的 `mcpRuntimes`）登记，运行中经 `mcp.add` 新加或修改的 server 也走这一步。每个值连同它的 base64、URL 编码、JSON 转义写法一起登记。不少于 8 个字符才登记，比 03 给 MCP 日志定的 4 个字符严，因为这里要少换掉普通的配置值。
+2. 登记值：主进程每次读到密钥值都当场登记。登记点是 ① `host.secrets` 的每一次 `get` 读出（包括启动后第一次读上一次运行存下的 key）与每一次 `set` 写入（`rememberingSecrets`；provider key、自定厂商 key、MCP 的 `env_keys` 与静态头都经它）；② 开发构建从环境变量回落取到的密钥（`apps/desktop/src/main/provider.ts` 解析出 `source: 'env'` 的那一刻，名字来自 `DEV_ENV_FALLBACK`）；③ kernel 连接池往某台 server 的脱敏表里加的每一个值，经 `onSecret` 报出，包括从分片拼出的整段 OAuth 令牌、refresh token 与 client secret（D19）；④ MCP server 配置里 `envs` 的值，desktop 每次把 MCP 配置交给连接池时（`mcp/runtime.ts` 的 `mcpRuntimes`）登记，运行中经 `mcp.save` 新加或修改的 server 也走这一步。每个值连同它的 base64、URL 编码、JSON 转义写法一起登记。不少于 8 个字符才登记，比 03 给 MCP 日志定的 4 个字符严，因为这里要少换掉普通的配置值。
 3. 通用格式兜底：`sk-`、`gh[opusr]_`、`github_pat_`、`glpat-`、`xox[abp]-`、`AKIA`、`AIza` 开头的串；`Bearer` 后的令牌；三段式 JWT；网址里 `token`、`key`、`apikey`、`api_key`、`api-key`、`secret`、`client_secret`、`code`、`access_token`、`access-token`、`refresh_token`、`password`、`sig` 的值（参数名不分大小写）；`Authorization:` 头的值；PEM 私钥块；网址里的 `user:pass@`。
 
 都换成 `[redacted]`；最后应用目录换成 `<app>`，主目录前缀换成 `~`。漏登记由两样守：结构上只有一个被包住的 `HostSecrets`（规矩第 5 条）；每个登记点一条走真实路径的哨兵用例，包括「上次已存、这次重启后只经 `get` 读出」那一条（验收 3）。
@@ -221,7 +221,7 @@ export interface McpPoolOptions { /* 已有成员不动 */ readonly onSecret?: (
 - 打开：`main()` 一开始（单实例锁已拿到）按 `profileDirFor(userData, 'local', 'personal')` 算出日志文件夹，照规矩第 7 条检查与建立；每行同步写（E6）。上次最后一行没有换行时先补一个。`will-quit` 的监听在 `open` 之后才注册。
 - 运行标记：`open` 读旧标记，不是 `none` 就自己写 `app.unclean-exit`（读不出时两个字段为 null），再写新标记。`will-quit` 时 `close()`。启动失败走 `app.exit(1)`，不删标记。
 - SIGTERM 有三种情形（E7）：srt 装上它的信号监听之前，Electron 把 SIGTERM 当成正常退出处理，写 `app.quit`；srt 装上之后、Tenon 的 `registerSandboxSignals` 登记之前，SIGTERM 只让 srt 复位，进程不退出；登记之后，走正常退出。
-- 上限：单行 16 KiB，字符串字段 2000 字，超出截断并写明截了多少，如 `…(+5120)`；先脱敏再截断。整行仍超过 16 KiB 时，把当时最长的字符串字段再截一半，直到放得下。换行与控制字符由 JSON 转义，一条不会拆成两行。
+- 上限：单行 16 KiB，字符串字段 2000 字，超出截断并写明截了多少，如 `…(+5120)`（留下的部分不超过上限，这个标记加在后面、不算在上限里）；先脱敏再截断。整行仍超过 16 KiB 时，把当时最长的字符串字段再截一半，直到放得下。换行与控制字符由 JSON 转义，一条不会拆成两行。
 - 写失败：只往 stderr 报一次，之后照常运行，不抛。
 
 **启动失败**（D15）：`index.ts` 末尾 `startSingleInstance(...).catch` 只调 `reportStartupFailure`：先记 `app.startup-failed`（日志还没开就先 `openFallback`），再等 ready，再弹框，再 `exit(1)`。提示框的标题与正文走 i18n，正文写 Tenon 没能启动与日志文件夹的完整路径（主目录写成 `~`）；日志写不进去时写「日志也没能写下」和错误名。
@@ -259,8 +259,8 @@ export interface McpPoolOptions { /* 已有成员不动 */ readonly onSecret?: (
 ## 验收标准
 
 1. Tenon 自己的代码原来打到控制台的每一种提示、警告和错误都写进日志文件，带时间、级别、事件和版本；开发时终端里照样看得到，安装版不镜像到 stderr（`<profileDir>/logs/main.jsonl`；「每一处」由 lint 守，集成用例只测逐项写成字面量的几个代表来源）。
-2. 一行只放一条：值里的换行和控制字符被转义；一行不超过 16 KiB，超长的字段截断并写明截了多少，整行仍超长时继续截最长的字段；上次写到一半的行，下次启动先补上换行；开日志之前缓存的行按原顺序写进去，溢出的记一行丢了几条。
-3. 机密不进日志文件。哨兵从每个登记点的真实路径进来：内存钥匙串里事先就有、包上之后只经 `get` 读出的（模拟上次存的、这次重启后再读）；经 `provider.configure` 写入的；开发期环境变量；从分片拼出的 OAuth 令牌；整段 JSON 里的 client secret；MCP 的 `env_keys`，以及经 `mcp.add` 加进来的 `envs`。再由「写入口」表里的每一处写出，并把哨兵的 base64、URL 编码、JSON 转义写法（由独立脚本先算好写进测试）也注入进去；另有跨在 300、500、2000 字截断点上的哨兵，一个是另一个前缀的两个哨兵（短的那个先登记），和几种常见格式的令牌。轮转之后，`main.jsonl`、它的两份旧文件和 `running.json` 里，不只找不到完整的哨兵，也找不到它的任何片段：截断点前留下的那一段（不少于 8 个字符）、长哨兵去掉短哨兵之后剩下的尾巴。
+2. 一行只放一条：值里的换行和控制字符被转义；一行不超过 16 KiB，超长的字段截断并写明截了多少，整行仍超长时继续截最长的字段；上次写到一半的行，下次启动先补上换行；开日志之前缓存的行按原顺序写进去（缓存最多 1000 行，超出的丢后来的），溢出的记一行丢了几条。
+3. 机密不进日志文件。哨兵从每个登记点的真实路径进来：内存钥匙串里事先就有、包上之后只经 `get` 读出的（模拟上次存的、这次重启后再读）；经 `provider.configure` 写入的；开发期环境变量；从分片拼出的 OAuth 令牌；整段 JSON 里的 client secret；MCP 的 `env_keys`，以及经 `mcp.save` 加进来的 `envs`。再由「写入口」表里的每一处写出，并把哨兵的 base64、URL 编码、JSON 转义写法（由独立脚本先算好写进测试）也注入进去；另有跨在 300、500、2000 字截断点上的哨兵，一个是另一个前缀的两个哨兵（短的那个先登记），和几种常见格式的令牌。轮转之后，`main.jsonl`、它的两份旧文件和 `running.json` 里，不只找不到完整的哨兵，也找不到它的任何片段：截断点前留下的那一段（不少于 8 个字符）、长哨兵去掉短哨兵之后剩下的尾巴。
 4. 对话不经真实路径进日志：用假的模型跑一次真实的会话，其中至少有一次工具调用、一次失败后重试的请求和一次停下；消息、回复与工具参数不出现在日志文件里。只有 §已知限制与代价 列出的自由文字字段例外。
 5. 主目录下的路径在日志里写成 `~/…`，应用目录写成 `<app>`；错误只记名字、码、截断后的说明和前 10 帧，`cmd`、`spawnargs`、`env` 等属性不进日志。
 6. 界面向后台的请求失败记一行：通道、失败种类（`invalid-request`、`handler-failed`、`invalid-response`）和脱敏截断后的说明；正在退出、正在删除会话时被拒的请求不记。
@@ -288,3 +288,4 @@ export interface McpPoolOptions { /* 已有成员不动 */ readonly onSecret?: (
 
 - 2026-11-28 · 给你看的一页「要你定的」 · 澄清：补上 60 行上限的两处例外（600 行、九种不限量），原先只写在决策记录里 · PR #98
 - 2026-11-28 · 验收 17 · 澄清：「启动是第一行」指这次启动的第一行，`app.unclean-exit` 可以在它前面 · PR #98
+- 2026-11-28 · §脱敏、§记什么「界面报错」、§日志怎么写、§接口、验收 3 · 澄清（测试作者指出说不清的地方）：`mcp.add` 更正为 `mcp.save`；`repeats` 第一条是 1、补写行是总次数；来源取路径最后一段；截断标记不算在上限里；`open` 的 `dir` 是日志文件夹本身、不存在就建；开日志前的缓存最多 1000 行、超出的丢后来的；运行标记的临时文件名是 `running.json.tmp` · PR #98
