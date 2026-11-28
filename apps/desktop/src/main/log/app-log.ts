@@ -156,6 +156,17 @@ function quotaOf(event: LogEvent): Quota | null {
   }
 }
 
+/**
+ * How many lines an event stands for when it is given up for want of a file to write it in: the
+ * lines a `log.dropped` counted, the repeats a run of one interface error adds to its first line
+ * (which was written, or given up, on its own); any other event is one line (spec §怎么写 轮转失败).
+ */
+function weightOf(event: LogEvent): number {
+  if (event.event === 'log.dropped') return Math.max(1, event.count)
+  if (event.event === 'renderer.error') return Math.max(1, event.repeats - 1)
+  return 1
+}
+
 /** A string field that can be cut shorter while a line is made to fit. */
 class Field {
   readonly original: string
@@ -314,9 +325,12 @@ export function createAppLog(options: AppLogOptions): AppLog {
   /** The latest line of each carried kind of this launch, as the event it was written from. */
   const carried = new Map<LogEvent['event'], Pending>()
   let run: RendererRun | null = null
-  /** Lines given up because the file was full and could not turn over; written once it has. */
+  /**
+   * Lines given up because the file was full and could not turn over, or the new one could not be
+   * opened (a counted line is one line, whatever it stood for); written once it has.
+   */
   let rotateDropped = 0
-  /** No new try to turn the file over before this instant (ms since the epoch). */
+  /** No new try to turn the file over, or to open the new one, before this instant (ms since the epoch). */
   let rotateRetryAt = 0
 
   /** The one word to stderr when the file cannot be written; nothing after it. */
@@ -475,11 +489,32 @@ export function createAppLog(options: AppLogOptions): AppLog {
     }
   }
 
-  /** The line that says how many were given up while the file could not turn over. */
-  const rotateNote = (time: Date): string => {
-    const count = rotateDropped
-    rotateDropped = 0
-    return render('warn', { event: 'log.dropped', source: 'rotate', count }, time)
+  /**
+   * The new `main.jsonl`, opened and begun: the latest line of each carried kind copied to the top
+   * of it, then the count of lines given up while the file could not turn over. False when it
+   * cannot be opened: that is a failed turn-over too, and the next try is a minute away.
+   */
+  const beginFile = (dir: string, time: Date): boolean => {
+    try {
+      const opened = openMain(join(dir, FILE))
+      fd = opened.fd
+      size = opened.size
+    } catch (error) {
+      rotateRetryAt = time.getTime() + WINDOW_MS
+      report(reason(error))
+      return false
+    }
+    for (const entry of carried.values()) {
+      writeOut(`${render(entry.level, entry.event, entry.time, true)}\n`)
+    }
+    if (rotateDropped > 0) {
+      const count = rotateDropped
+      const note = render('warn', { event: 'log.dropped', source: 'rotate', count }, time)
+      mirror(note)
+      writeOut(`${note}\n`)
+      rotateDropped -= count
+    }
+    return true
   }
 
   /**
@@ -511,32 +546,26 @@ export function createAppLog(options: AppLogOptions): AppLog {
     // The full file is out of the way: what opens under its name is a new one.
     closeSync(fd)
     fd = -1
-    const opened = openMain(join(dir, FILE))
-    fd = opened.fd
-    size = opened.size
-    for (const entry of carried.values()) {
-      writeOut(`${render(entry.level, entry.event, entry.time, true)}\n`)
-    }
-    if (rotateDropped > 0) {
-      const note = rotateNote(time)
-      mirror(note)
-      writeOut(`${note}\n`)
-    }
-    return true
+    return beginFile(dir, time)
   }
 
-  /** True when the line is in the file. */
-  const append = (line: string, time: Date): boolean => {
+  /**
+   * True when the line is in the file. A line given up because the file could not turn over (or
+   * its new file could not be opened) is counted for `weight` lines, to be written as a
+   * `log.dropped` once it can be.
+   */
+  const append = (line: string, time: Date, weight: number): boolean => {
     try {
       if (fd < 0) {
-        // An earlier open or turn-over failed: try the file again before giving the line up.
-        if (folder === null) return false
-        const opened = openMain(join(folder, FILE))
-        fd = opened.fd
-        size = opened.size
+        // The file it turned over to could not be opened: tried again when the minute is over.
+        const dir = folder
+        if (dir === null || time.getTime() < rotateRetryAt || !beginFile(dir, time)) {
+          rotateDropped += weight
+          return false
+        }
       }
       if (size > 0 && size + bytesOf(line) > maxBytes && !turnOver(time)) {
-        rotateDropped += 1
+        rotateDropped += weight
         return false
       }
       writeOut(`${line}\n`)
@@ -564,8 +593,8 @@ export function createAppLog(options: AppLogOptions): AppLog {
     const line = render(level, event, time)
     mirror(line)
     if (phase !== 'open') return
-    append(line, time)
-    if (CARRIED.has(event.event)) {
+    // Only a line that is in the file is one to copy later: a line given up is counted, not copied.
+    if (append(line, time, weightOf(event)) && CARRIED.has(event.event)) {
       // The newest comes last: the copies are written in the order of the lines they copy.
       carried.delete(event.event)
       carried.set(event.event, { time, level, event })
@@ -833,6 +862,8 @@ export function createAppLog(options: AppLogOptions): AppLog {
     if (phase !== 'open') return
     try {
       const time = options.now()
+      // The last chance to turn the file over, whatever is left of the minute of waiting.
+      rotateRetryAt = 0
       flushRun(time)
       flushDrops(time)
       // Lines given up while the file could not turn over: written if it can be written now.
