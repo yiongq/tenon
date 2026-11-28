@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：ready，段一第 2.6 步做完（`feat/error-logs-seg1`，PR #101）：三轮评审加一次收尾核对与复验，结论通过，记录在 log.md「评审 · 2026-11-28 · 审过 916d8b9」；owner 当天补定 D21–D26。下一步第 2.7 步：带 owner 走查段一（要在 owner 的 Mac 上起开发版，先问）。
-需要你：① 段一走查（2.7）：说一声可以在你的 Mac 上起开发版；② 走查过后点名合并 PR #101（它改了 `.oxlintrc.json` 与 `scripts/lint-gate.test.mjs`，是 lint 规则变严，不开自动合并）。
+当前：ready，段一第 2.7 步走查做了一半（PR #101）：场景一 owner 回「三条都对」；场景二、三的 6 条给 owner 看了、还没逐条回答；场景四这次没法看（没配连接器）。记录在 log.md「走查 · 段一」。
+需要你：① 对走查场景二、三的 6 条回一句对或不对（日志在 `/tmp/tenon-walkthrough/profiles/local/personal/logs/main.jsonl`，重启会被清）；② 之后点名合并 PR #101（它改了 `.oxlintrc.json` 与 `scripts/lint-gate.test.mjs`，lint 规则变严，不开自动合并）。
 
 ## 分段
 
@@ -55,6 +55,9 @@
 2026-11-28：段一代码、评审与修复都在 `feat/error-logs-seg1`（代码停在 e737d7b，之后只有文档提交），评审记录通过。spec 的 PR #98 已合入 dev。下一步：2.7 带 owner 走查（存错 key 再发消息、正常开关一次看生命周期行；每条明确回答对或不对，记进 log.md）。段二开工的第一步先做 Open 里标「段二第一步」的三件，并删掉临时探针 `apps/desktop/e2e/probe-unhandled-rejection.spec.ts` 与 `helpers/probe-unhandled-rejection-preload.cjs`。
 
 ## Open
+
+- 段二第一步：沙箱自检按预期被拦时不记警告（走查看到；连同版本号那条，开工时补记进 decisions「agent 自定」）。
+- 段二走查（3.6）：用正常的开发启动方式起，确认 `ver` 是 Tenon 的版本；配一个连接器，补看段一场景四（连接器日志只有本人能读）。
 
 - 段二第一步：长于 4096 字的值重复登记时不排到最新、计数会涨（复验的突变 N2）：先写红的用例再修。
 - 段二第一步：`apps/desktop/src/main/log/redact.ts` 里 `REDACT_INPUT_LIMIT` 上的注释写的最坏耗时不实，改成 D26 的实测数。
