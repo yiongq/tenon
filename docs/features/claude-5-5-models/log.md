@@ -321,3 +321,15 @@
 - [建议] plan「需要你」「交接」仍按 #97 没合写：「先等 #97、#99 合入」「自动合并已开」，而 #97 已于 14:53 合入 dev（4fd6f71），本地 origin/dev 14:59 已取到，早于 b277dd4（15:01） · 证据：`git log -1 4fd6f71`、`git reflog refs/remotes/origin/dev`、`git log -1 b277dd4` 的时间 · 已修 d276e79：「需要你」写 #97 已于 2026-11-28 合入、只等 #99；「交接」改成已合入 dev
 - [建议] plan「需要你」没列 log 里另一条还没回的交 owner：2026-10-23「审过 4550a17」那条 [建议]（「本项目补充」第 9 条「厂商现状表……本次不创建」已过时） · 证据：`--status` 的「交 owner 还没回（claude-5-5-models）」列着它；§8「写「交 owner」时，在对话里和 plan 的「需要你」里写明」；本 PR 之前就如此，不是本轮引入 · 已修 d276e79：「需要你」加第 ② 条，写明原文、要 owner 点名批准、改与不改的代价
 - 补记：「审过 c7fe624」那条记录最后三条建议的处置由「待作者处置」填成「已修 d276e79」（只改 plan.md，评审之后允许，不再复审）。
+
+## 验收核对 · 2026-11-28（第 14 步）
+
+- 依据：CI run 46120326933（PR #99 head 1b034bd，ci、e2e、sandbox-macos、spec-check、ci-ok 五项全绿；与合入后的 dev `48331f2` 同树）的三份测试报告，下载到 spec-check 读报告的位置（reports/vitest.json、reports/vitest-macos.json、apps/desktop/reports/e2e.json），跑 `python3 .sdd/spec-check.py --all --report`：trace 不再报本 spec 的验收没有用例点名或没有通过的用例。
+- 逐条（报告里标题带「claude-5-5-models 验收 N」的用例，全部 passed）：
+  - 1 definitions.test.ts 6 例 · 2 thinking-shapes.test.ts 8 例 · 3 compaction.test.ts 2 例 · 4 encoder-version.test.ts 4 例 · 5 thinking-shapes.test.ts 7 例 · 6 thinking-default.test.ts 1 例 · 7 evals-cost.test.ts 6 例 · 8 copy-coverage.test.ts 2 例 · 9 model-menu.spec.ts、text-fit-02.spec.ts 3 例 · 10 search-backends.test.ts 1 例 · 11 definitions.test.ts 1 例
+  - 13 definitions.test.ts、model-families.test.ts 19 例 · 14 model-selection.test.ts 3 例 · 15 model-selection.test.ts、custom-vendor-runtime.test.ts、model-menu、provider-settings、recovery 等 24 例 · 16 model-selection、provider-routes、provider-catalogue、custom-vendor-runtime、model-menu 等 35 例 · 17 provider-settings.spec.ts、renderer-provider-model-selection.test.ts 15 例 · 18 config-route.test.ts、profile.test.ts 9 例
+  - 12（live）：CI 不跑，见「实施 · 2026-11-28（第 12 步）」：官方组两行各 3 passed，新加三例 3 passed。
+  - 19：presentation-r1 写第一把 key 的代码已在 dev，按第一种情形在本 spec 里验：provider-routes.test.ts 与 provider-settings.spec.ts 各 1 例通过。
+- 全量 e2e：CI 的 e2e 作业跑的是 `xvfb-run pnpm test:e2e`（全量），278 expected、0 unexpected、0 flaky、6 skipped；跳过的 6 例都是 macOS 专属（composer-frame 2、navigation 1、stop-exit 3），与本 spec 无关。没有因会话不换变红的用例。
+- 全量 vitest：6233 例，6092 passed、0 failed、141 pending；macOS 作业 401 例，384 passed、0 failed、17 pending。
+- 这一步只核到「每条验收有点名用例且在 CI 上通过」；各用例的断言是否空心，留给第 15 步之后的评审逐条读。
