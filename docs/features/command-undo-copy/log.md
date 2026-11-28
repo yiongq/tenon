@@ -41,3 +41,11 @@ overview：不用改。它只在模块表里泛写 renderer 有「工具行与�
 
 - [major] 取错轮的 canRestore 能存活（N6、N8、N9） · 已修（本条之后的提交，复审核对时补号）：工具行测试的快照读模型加第二轮，可放在这次调用那一轮之前或之后，两轮的 `canRestore` 相反，断言行只跟这次调用那一轮走；作者本地打上 N6、N8、N9，三个都红在验收 3。
 - [major] decisions.md 把 owner 批 ready 时的「5 项」改成了「6 项」 · 已修（同一提交）：那条原话记录改回「5 项」；批 ready 之后改写的第 3 条与新增的第 6 条各标「批 ready 之后改／加，owner 还没看过，已在对话里列出」，在对话里逐条列给 owner。
+- 补记：上面两条「已修」的提交是 237e540；第二条里「新增的第 6 条」应为「新增的第 4 条」（decisions.md 里那条排第 4，标注本身没错）。
+
+## 评审 · 2026-11-28 · 审过 237e540
+结论：通过    评审：派新上下文的子 agent 复审（Opus），只读上一轮发现、修复 diff（74cbae6..237e540，去掉 log.md、plan.md）、作者处置清单、核心细则第 8 条，并在临时 worktree（检出 237e540）里核对 spec.md、decisions.md 和 ec4769d 版 decisions.md
+突变：8 个（复跑上一轮存活的 N6、N8、N9，新出 M1–M5：ToolRow 取 rounds[0]、ToolRow 用 every、callSnapshot 取 rounds[0]、callSnapshot 忽略 callKey、callSnapshot 最后匹配的轮说了算），跑 renderer-tool-row.test.ts 与 renderer-snapshots.test.ts；首跑存活 0 个，全部红在「command-undo-copy 验收 3」（M4 另红一条）；基线 renderer-*.test.ts 加 copy-coverage.test.ts 共 44 个文件、999 条全绿
+发现：
+- [major] 验收 3 取错轮的 canRestore 能存活（N6、N8、N9） · 证据：在 237e540 上重新打 N6（callSnapshot 改取 rounds.at(-1)!.canRestore）、N8（ToolRow 改传 saved !== null && rounds.data?.rounds.at(-1)?.canRestore === true）、N9（改传 saved !== null && rounds.data?.rounds.some((r) => r.canRestore) === true），各自都是 1 failed | 42 passed，红在 renderer-tool-row.test.ts「command-undo-copy 验收 3」；新用例把 round-2 放在 round-1 前或后、canRestore 与本轮相反，共四种组合，同时挡住取最前轮、取最后轮、any、all（M1–M5 也都红）；修复只改测试，没有新增状态、机制、接口、表或配置项 · 已修 237e540
+- [major] decisions.md 把 owner 批 ready 时的「5 项」改成「6 项」 · 证据：git show ec4769d:docs/features/command-undo-copy/decisions.md 有 5 条「- 自定」、原话注记写「5 项」；237e540 的注记已改回「5 项」，批 ready 之后改写的工具行那条与新增的「任务文件夹里」那条各标「批 ready 之后改／加，owner 还没看过」；与 spec.md「要你定的」里「6 项（评审之后改了一项、加了一项）」一致 · 已修 237e540
