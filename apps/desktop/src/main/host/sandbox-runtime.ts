@@ -301,6 +301,7 @@ export async function createDesktopSandboxRuntime(q: {
   readonly isPackaged: boolean
   readonly startupEnv: StartupEnv
   readonly log: (line: string) => void
+  readonly unattributedLog?: (line: string) => void
 }): Promise<
   DesktopSandboxRuntime & {
     bindSessionFolders(read: (sessionId: string) => Promise<readonly AbsolutePath[]>): void
@@ -348,6 +349,7 @@ export async function createDesktopSandboxRuntime(q: {
     isPackaged: q.isPackaged,
     startupEnv: q.startupEnv,
     log: q.log,
+    ...(q.unattributedLog === undefined ? {} : { unattributedLog: q.unattributedLog }),
     startPosture: () =>
       startDesktopSandboxPosture(
         {

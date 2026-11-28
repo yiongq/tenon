@@ -15,6 +15,7 @@ import {
   writeConfig,
   writeConfigHeld,
 } from '../src/main/host/profile.js'
+import { appLog } from '../src/main/log/app-log.js'
 
 /** Acceptance 5: two tenants write config.json to different, mutually invisible paths. */
 describe('desktop profiles', () => {
@@ -482,7 +483,7 @@ describe('desktop profiles', () => {
     expect(lines[0]).toContain('customVendors[0]')
   })
 
-  it('logs a dropped entry through console.warn when the caller gives no log, without its address', async () => {
+  it('logs a dropped entry through the app log when the caller gives no log, without its address', async () => {
     // Main's own reads (startup, the store, run-assembly, the routes) pass no `log`.
     const fs = new DesktopFs()
     const identity = await openProfile(fs, absolutePath(root), 'local', 'personal')
@@ -494,10 +495,13 @@ describe('desktop profiles', () => {
       models: [],
     }
     await fs.writeFile(configPath(identity), JSON.stringify({ customVendors: [broken] }))
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const lines: string[] = []
+    const line = vi.spyOn(appLog, 'line').mockReturnValue((text) => {
+      lines.push(text)
+    })
     try {
       expect((await readConfig(fs, identity)).customVendors).toEqual([])
-      const lines = warn.mock.calls.map((args) => args.map(String).join(' '))
+      expect(line).toHaveBeenCalledWith('config', 'warn')
       expect(lines).toHaveLength(1)
       expect(lines[0]).toContain('customVendors[0]')
       expect(lines[0]).not.toContain('secret-host')

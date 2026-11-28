@@ -22,6 +22,7 @@ import type {
 } from '@tenon-app/kernel'
 import type { EventSender } from './host/index.js'
 import { localDateOf } from './locale.js'
+import { appLog } from './log/app-log.js'
 import { createRunQueue } from './queue.js'
 import type { DesktopQueue } from './queue.js'
 import { createRunEvents, emitChatEvent } from './run-events.js'
@@ -304,7 +305,7 @@ export interface DesktopLoopOptions {
 }
 
 export function createDesktopLoop(options: DesktopLoopOptions): DesktopLoop {
-  const log = options.log ?? ((line: string): void => console.warn(line))
+  const log = options.log ?? appLog.line('chat', 'warn')
   const registry = createRunRegistry(
     options.clock,
     (root, state) => {
@@ -388,7 +389,7 @@ function answerOf(
 
 export function registerChatRoutes(deps: ChatDeps): void {
   const { send, ipcMain, sessions, loop, gate } = deps
-  const log = deps.log ?? ((line: string): void => console.warn(line))
+  const log = deps.log ?? appLog.line('chat', 'warn')
 
   registerRoute(ipcMain, chatSend, async ({ sessionId, text }, event) => {
     await gate

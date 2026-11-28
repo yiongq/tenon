@@ -1,4 +1,6 @@
 import type { AbsolutePath, HostAdapter } from '@tenon-app/kernel'
+import { appLog } from '../log/app-log.js'
+import { rememberingSecrets } from '../log/redact.js'
 import { SystemClock } from './clock.js'
 import { IpcConfirm } from './confirm.js'
 import type { EventSender } from './confirm.js'
@@ -22,6 +24,11 @@ export interface DesktopHostOptions {
   /** Pushes a main → renderer event; the host never touches BrowserWindow itself. */
   send: EventSender
   log: (line: string) => void
+  /**
+   * Where the sandbox's line for a violation that fits no command goes: a source of its own, for it
+   * is the one line the sandboxed program can make as often as it likes. Falls back to `log`.
+   */
+  unattributedLog?: (line: string) => void
   /** `app.isPackaged`, passed in rather than read so this module stays free of electron. */
   isPackaged: boolean
   /**
@@ -60,13 +67,19 @@ export async function createDesktopHost(options: DesktopHostOptions): Promise<
     isPackaged: options.isPackaged,
     startupEnv: options.startupEnv,
     log: options.log,
+    ...(options.unattributedLog === undefined ? {} : { unattributedLog: options.unattributedLog }),
   })
   const clock = new SystemClock()
   const snapshots = new DesktopSnapshots({ identity, clock, process: hostProcess, sandbox })
   return {
     identity,
     fs,
-    secrets: useMemorySecrets(options.isPackaged) ? new MemorySecrets() : new KeychainSecrets(),
+    // The one `HostSecrets` of the main process, wrapped so that every value that is read or written
+    // is registered with the app log (error-logs §一直要成立的规矩 第 5 条).
+    secrets: rememberingSecrets(
+      useMemorySecrets(options.isPackaged) ? new MemorySecrets() : new KeychainSecrets(),
+      appLog,
+    ),
     process: hostProcess,
     sandbox,
     confirm: new IpcConfirm(options.send),

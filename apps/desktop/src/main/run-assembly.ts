@@ -54,6 +54,7 @@ import {
 } from './custom-vendors/registry.js'
 import type { InstanceRow } from './custom-vendors/registry.js'
 import { endpointOf, hostOf, originOf } from './endpoint.js'
+import { appLog } from './log/app-log.js'
 import { configGeneration, readConfig, watchConfig } from './host/profile.js'
 import {
   BASE_URL_KEY,
@@ -94,7 +95,7 @@ export interface RunConnectorOptions {
 
 export function createRunConnector(options: RunConnectorOptions): RunConnector {
   const { host, providers } = options
-  const log = options.log ?? ((line: string): void => console.warn(line))
+  const log = options.log ?? appLog.line('provider', 'warn')
   const env = (): EnvLike => devEnv({ isPackaged: options.isPackaged === true, env: options.env })
   logRefusedDevEndpoints(env(), options.config?.providerConfig ?? {}, log)
   /**

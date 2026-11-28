@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util'
+import { appLog } from '../log/app-log.js'
 import type { AbsolutePath, HostFs, HostIdentity } from '@tenon-app/kernel'
 import {
   CUSTOM_PROVIDER_ID_PATTERN,
@@ -44,7 +45,7 @@ export function configPath(identity: HostIdentity): AbsolutePath {
 export async function readConfig(
   fs: HostFs,
   identity: HostIdentity,
-  log: (line: string) => void = (line) => console.warn(line),
+  log: (line: string) => void = appLog.line('config', 'warn'),
 ): Promise<Config> {
   const path = configPath(identity)
   if ((await fs.stat(path)) === null) return configSchema.parse({})

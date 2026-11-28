@@ -337,12 +337,20 @@
       // shares main's cwd.
       "files": ["apps/desktop/src/main/**"],
       "rules": {
+        // error-logs §一直要成立的规矩 第 1 条: only `log/` writes to the console or stderr; everything
+        // else says it through `appLog` (the next override gives `log/` its way back).
+        "no-console": "error",
         "no-restricted-properties": [
           "error",
           {
             "object": "process",
             "property": "cwd",
             "message": "main's cwd is <userData>/sandbox-cwd once the sandbox starts (spec 04 读法 50); use absolute paths."
+          },
+          {
+            "object": "process",
+            "property": "stderr",
+            "message": "main's lines go through appLog (apps/desktop/src/main/log); only log/ writes to stderr."
           }
         ],
         // The same read through a named import. `globalThis.process.cwd()` and a default or namespace
@@ -362,6 +370,21 @@
                 "message": "main's cwd is <userData>/sandbox-cwd once the sandbox starts (spec 04 读法 50); use absolute paths."
               }
             ]
+          }
+        ]
+      }
+    },
+    {
+      // The app log is the one place in main that writes to the console and to stderr.
+      "files": ["apps/desktop/src/main/log/**"],
+      "rules": {
+        "no-console": "off",
+        "no-restricted-properties": [
+          "error",
+          {
+            "object": "process",
+            "property": "cwd",
+            "message": "main's cwd is <userData>/sandbox-cwd once the sandbox starts (spec 04 读法 50); use absolute paths."
           }
         ]
       }

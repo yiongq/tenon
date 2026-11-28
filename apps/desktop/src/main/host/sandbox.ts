@@ -224,6 +224,11 @@ export interface DesktopSandboxDeps {
   /** Calls `listener` once on SIGTERM or SIGINT; registered once `initialize` returned (§退出). */
   readonly onSignal: (listener: () => void) => void
   readonly log: SandboxLogger
+  /**
+   * The line for a violation that fits no open command, which the sandboxed program can make as
+   * often as it likes: a log of its own, so that it cannot crowd out the rest. Defaults to `log`.
+   */
+  readonly unattributedLog?: SandboxLogger
 }
 
 /**
@@ -684,7 +689,8 @@ export class DesktopSandbox implements HostSandbox {
       // made the line one tag-free line; the key came over a carrier the sandbox can write, so it
       // is cut to an id's length and quoted.
       const which = key === undefined ? 'none' : JSON.stringify(key.slice(0, 100))
-      this.deps.log(`sandbox: a violation for no open command (key ${which}): ${event.line}`)
+      const log = this.deps.unattributedLog ?? this.deps.log
+      log(`sandbox: a violation for no open command (key ${which}): ${event.line}`)
       return
     }
     const violation = classify(event.line, record.context)

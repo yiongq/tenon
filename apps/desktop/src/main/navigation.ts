@@ -1,4 +1,5 @@
 import type { WebContents } from 'electron'
+import { appLog } from './log/app-log.js'
 
 /** Schemes main will hand to the OS. Everything else (file:, smb:, custom handlers) is refused. */
 export const EXTERNAL_SCHEMES: ReadonlySet<string> = new Set(['https:', 'http:', 'mailto:'])
@@ -40,7 +41,7 @@ export function hardenWebContents(
   contents.on('will-attach-webview', (event) => event.preventDefault())
   contents.setWindowOpenHandler(({ url }) => {
     if (isAllowedExternalUrl(url)) openExternal(url)
-    else console.warn('[window-open] refused a non-web URL')
+    else appLog.line('navigation', 'warn')('[window-open] refused a non-web URL')
     return { action: 'deny' }
   })
 }

@@ -89,3 +89,4 @@
 - 测试改动：apps/desktop/test/error-logs-watch.test.ts、apps/desktop/e2e/error-logs.spec.ts · error-logs 验收 14 · 收紧：`repeats` 原先放宽成「0 或 1」「2 或 3」，spec 澄清为第一条 1、补写行是总次数后改成精确值（lead 改，实现之前）。
 - 测试作者指出 spec 说不清的十处：七处已澄清进 spec（修订记录 2026-11-28）；其余三处照测试的理解不改 spec：MCP 日志收紧的入口时机、多行密钥按整段登记、`ErrorSummary` 的 cause 只保证 message 不进。
 - 留给实现者：`test/support/error-logs.ts` 的 5 行与 `pool-on-secret.test.ts` 的 1 行 `@ts-expect-error` 在模块出现后删掉（只删这 6 行不算削弱）。
+- 测试改动：apps/desktop/test/profile.test.ts · 「logs a dropped entry through console.warn when the caller gives no log, without its address」改名为「…through the app log…」 · `readConfig` 不传 log 时的回落按 spec §记什么改成 `appLog.line('config', 'warn')`，不再走 `console.warn`；用例改成 spy `appLog.line`，仍断言恰一行、含 `customVendors[0]`、不含 `secret-host`，另加一句断言来源与级别是 `config`、`warn`（E2、plan 2.4）。

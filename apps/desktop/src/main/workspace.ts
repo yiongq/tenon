@@ -25,6 +25,7 @@ import type {
   WorkspaceChange,
 } from '@tenon-app/kernel'
 import { endpointOf } from './endpoint.js'
+import { appLog } from './log/app-log.js'
 import { createFolderGrants } from './folder-grants.js'
 import type { FolderGrants } from './folder-grants.js'
 import { readConfig, withConfigLock, writeConfig, writeConfigHeld } from './host/profile.js'
@@ -123,7 +124,7 @@ export function registerWorkspaceRoutes(deps: WorkspaceRoutesDeps): void {
     const pending = (notifications.get(sessionId) ?? Promise.resolve())
       .then(() => deps.onWorkspaceChanged?.(sessionId, folders))
       .catch((error: unknown) => {
-        ;(deps.log ?? console.warn)(
+        ;(deps.log ?? appLog.line('workspace', 'warn'))(
           `[workspace] ${sessionId}: snapshot notification failed: ` +
             (error instanceof Error ? error.message : String(error)),
         )
