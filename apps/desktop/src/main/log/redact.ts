@@ -33,10 +33,11 @@ const FUNCTION_THROWN = '[function]'
  * 工作量有上界（D25）」): what is past it is cut off, and a registered value or spelling longer than
  * it is registered by its first characters up to it. A lookup follows the text through the tree of
  * registered words from every place in it, no further than the longest word, so a string costs at
- * most about half this limit squared steps (some 8 million). Measured on a
- * development machine, a text of 1 MB met 4089 registered values that are each the start of the
- * next in 35–60 ms, and one value of this length in under 20 ms; words that branch off a long run
- * they share cost 100–180 ms, which is the worst shape found. The spec's bound is 200 ms.
+ * most about half this limit squared steps (some 8 million). Measured on a development machine, a
+ * text of 1 MB met 4089 registered values that are each the start of the next in 35–60 ms, and one
+ * value of this length in under 20 ms; the common worst shapes cost one field under 200 ms. The
+ * worst known is another: 4000-odd registered values that fork at every level, which cost one long
+ * field 0.2–0.26 s (the spec's 已知限制, D26). The limit bounds the work, it does not make it small.
  */
 export const REDACT_INPUT_LIMIT = 4_096
 

@@ -34,6 +34,7 @@
   },
   "help": {
     "title": "Help",
+    "openLogs": "Open Logs Folder",
     "learnMore": "Learn More"
   }
 }

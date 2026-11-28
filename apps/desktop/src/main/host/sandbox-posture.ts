@@ -322,7 +322,10 @@ export function startDesktopSandboxPosture(
 export function startSandboxPosture(deps: SandboxPostureDeps): SandboxPostureRun {
   const initialized = Promise.withResolvers<void>()
   const progress = { initialize: 'not-called' as InitializeResult }
-  const outcome = startup(deps, progress, () => initialized.resolve()).catch(
+  // One id for this start's self-test, known before it runs: the host sandbox is told it through
+  // the run, so that the violation srt reports for the stopped write is not taken for a stray one.
+  const selfTestId = `tenon-sandbox-self-test.${randomBytes(16).toString('hex')}`
+  const outcome = startup(deps, progress, () => initialized.resolve(), selfTestId).catch(
     (error: unknown): SandboxPostureOutcome => {
       deps.log(`sandbox: startup failed: ${messageOf(error)}`)
       return unavailable(progress.initialize, [reason('init-failed', messageOf(error))])
@@ -336,13 +339,14 @@ export function startSandboxPosture(deps: SandboxPostureDeps): SandboxPostureRun
       `sandbox: ${result.state}${reasons === '' ? '' : ` (${reasons})`}`,
     )
   })
-  return { initialized: initialized.promise, outcome }
+  return { initialized: initialized.promise, outcome, selfTestId }
 }
 
 async function startup(
   deps: SandboxPostureDeps,
   progress: { initialize: InitializeResult },
   markInitialized: () => void,
+  selfTestId: string,
 ): Promise<SandboxPostureOutcome> {
   // 1. Platforms that never initialize (Q4 A, T32).
   const { platform } = deps
@@ -431,7 +435,7 @@ async function startup(
   const degraded = warnings.map(warningReason)
 
   // 5, 6.
-  const failure = await selfTest(deps, session, binaries)
+  const failure = await selfTest(deps, session, binaries, selfTestId)
   if (failure !== undefined) return unavailable(progress.initialize, [failure])
   if (degraded.length > 0) {
     return {
@@ -560,6 +564,7 @@ async function selfTest(
   deps: SandboxPostureDeps,
   session: SandboxRuntimeConfig,
   binaries: LinuxBinaries | null,
+  commandId: string,
 ): Promise<SandboxReason | undefined> {
   const base = selfTestBase(deps)
   if (base === undefined) {
@@ -577,7 +582,7 @@ async function selfTest(
       { filesystem: session.filesystem },
       undefined,
       deps.home,
-      { commandId: `tenon-sandbox-self-test.${randomBytes(16).toString('hex')}` },
+      { commandId },
     )
     argv = wrapped.argv
   } catch (error) {

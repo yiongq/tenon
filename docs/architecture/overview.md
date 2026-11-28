@@ -46,6 +46,7 @@
 | main · 宿主实现 | `HostAdapter` 的桌面实现：文件、钥匙串、进程树、srt 沙箱与姿态自检、出网与不可信抓取、审批投递、命令 shell 的环境、改动前的快照（profile 里的影子 git 仓库与单文件副本）与一键还原 | 判定（只执行 kernel 判过的调用） | `apps/desktop/src/main/host` |
 | main · Tape 存储 | SQLite 版 `TapeStore` 与 DDL，和内存实现跑同一套一致性测试 | 写入规则（来自 kernel） | `apps/desktop/src/main/tape` |
 | main · MCP | 连接器配置读写、server 的启动确认、工具 schema 在 worker 线程里校验、日志、OAuth 回调与打开浏览器、MCP 路由 | 连接与调用（kernel · mcp） | `apps/desktop/src/main/mcp` |
+| main · 错误日志 | 主进程自己的警告与错误写进 `logs/main.jsonl`：脱敏（登记值、通用格式）、每来源限量、轮转、文件只有本人能读、运行标记；进程退出与没接住的错各记一行；启动失败的提示框；「打开日志文件夹」 | 只有 `log/` 写终端与日志文件（lint 与静态扫描守） | `apps/desktop/src/main/log/` |
 | preload | 给窗口一个 `window.tenon`：`invoke` / `on` 只放行 contracts 登记的通道，外加启动语言与平台 | 载荷校验（main、renderer 两端做） | `apps/desktop/src/preload` |
 | renderer | React 界面：对话流、工具行与拦截回执、审批卡、结算行与还原清单、输入框与文件夹、档位菜单与自动档横幅、文件夹授权框、设置（模型、连接器、权限与网络）；中英两种语言 | Node、electron 与钥匙串（由 lint 禁）；任何特权操作 | `apps/desktop/src/renderer` |
 | server（占位） | 只放 Tape 的 Postgres 版表结构，供 `tape:check` 与 SQLite 版逐项对照，从不执行 | 任何运行代码 | `apps/server/sql` |
@@ -140,7 +141,7 @@
 - **沙箱里的命令**：Bash 经 srt 包装（只读、工作区可写两档），网络只放白名单（默认为空），profile 目录、`.ssh` 与凭据位置拒读拒写；沙箱起不来时以你的权限运行、每条都问，卡上写明。
 - **工作区里的文件与链接**：快照、一键还原与 Delete 是主进程里以你的权限运行、不进沙箱的写和删，所以工作区内容当不可信输入。影子仓库的 git 参数只由 Tenon 拼、不读你的 git 全局配置、不跑钩子；还原动手前逐路径比身份；Delete 拍了快照时比身份，否则复查父目录与类型；叶子都不跟随链接，Delete 不删目录。还原只动 agent 改过的路径，命令运行期间以外被别处改过的（两次调用之间、等审批时、这一轮之后）按冲突默认保留；命令运行期间你在同一文件夹改的分不出来，算进命令的改动。
 - **MCP server 进程**：不进沙箱、以你的权限运行；每个 server 先经你确认，启动命令、参数、环境或地址一变就要重新确认。
-- **密钥**：只在主进程经 `HostAdapter.secrets` 读，不进日志，IPC 只回「是否已配置」。
+- **密钥**：只在主进程经 `HostAdapter.secrets` 读，IPC 只回「是否已配置」。主进程每次读到密钥都登记给错误日志（`apps/desktop/src/main/log/`），写日志时按字段换掉登记值与常见令牌格式；这是尽力而为，边界见 error-logs §已知限制与代价。
 
 ## 术语
 

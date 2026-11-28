@@ -1112,5 +1112,16 @@
       "hardlink": "The card said a snapshot was taken; this file is skipped because it has other names.",
       "outside-folders": "The card said a snapshot was taken; this path is skipped because it is no longer in the current folders."
     }
+  },
+  "logs": {
+    "startupFailed": {
+      "title": "Tenon could not start",
+      "body": "Tenon could not start. What went wrong is written in its log, in this folder:\n\n{folder}",
+      "bodyNoLog": "Tenon could not start, and the log could not be written either.\n\nError: {error}"
+    },
+    "openFailed": {
+      "title": "Could not open the logs folder",
+      "body": "Tenon could not open the logs folder. It is here:\n\n{folder}"
+    }
   }
 }

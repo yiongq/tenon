@@ -2,15 +2,15 @@
 
 ## 当前 / 需要你
 
-当前：ready，段一做完（PR #101）：第 2.7 步走查 9 条 owner 都回了「对」（log.md「走查 · 段一」），场景四（连接器日志）留到段二走查补看。等 owner 点名合并 #101，之后开段二。
-需要你：点名合并 PR #101（它改了 `.oxlintrc.json` 与 `scripts/lint-gate.test.mjs`，lint 规则变严，不开自动合并）。段二已在 `feat/error-logs-seg2` 上接着做（从段一分支开出，不等合并）。
+当前：ready，段一已合入 dev；段二在 `feat/error-logs-seg2`：第 3.0–3.4 步做完（测试 063cc60、实现 ee6be10、文档同步），格式、lint、类型检查绿，相关 178 条用例绿；e2e 与走查报告等 CI。下一步 3.5（评审）与 3.6（owner 读走查报告）。
+需要你：定流程优化的那份建议稿（私有笔记里的汇总）要不要先在段二试。
 
 ## 分段
 
 | 段 | 状态 | 这一段做完你能看到什么 | 守哪些验收 | 等 owner 做什么 |
 |---|---|---|---|---|
-| 一 · 报错写进日志 | 做完，走查通过，等合并 | 开发版里的报错、请求失败、模型请求失败、界面报错都进日志文件夹；里面没有 key；刷屏有上限；启动与退出都留一行；连接器日志只有你能读 | 1–7、13、14、16、17、18 | 批 ready；段末走查 |
-| 二 · 崩溃、启动失败与菜单入口 | 未开工，排在段一之后 | 进程崩了、主进程出错、被强杀之后都留下一行；启动失败有提示框；帮助菜单能打开日志文件夹；没有转储文件 | 8–12、15、19；验收 17 里 SIGTERM 那一支的 e2e 也在这一段补（3.2） | 段末走查（几种场景由 lead 演示） |
+| 一 · 报错写进日志 | 做完，已合入 dev | 开发版里的报错、请求失败、模型请求失败、界面报错都进日志文件夹；里面没有 key；刷屏有上限；启动与退出都留一行；连接器日志只有你能读 | 1–7、13、14、16、17、18 | 批 ready；段末走查 |
+| 二 · 崩溃、启动失败与菜单入口 | 在做 | 进程崩了、主进程出错、被强杀之后都留下一行；启动失败有提示框；帮助菜单能打开日志文件夹；没有转储文件 | 8–12、15、19；验收 17 里 SIGTERM 那一支的 e2e 也在这一段补（3.2） | 段末走查（几种场景由 lead 演示） |
 
 ## 步骤
 
@@ -31,13 +31,13 @@
   - [x] 2.6 段一收尾：`pnpm format:check && pnpm lint && pnpm typecheck`、`pnpm vitest run --maxWorkers=2`、`python3 .sdd/spec-check.py`；新上下文的独立评审分「对照 spec」「安全」「突变」三个视角，StrykerJS 只对改动过的文件跑、只出报告（本项目补充第 5 条）；带证据的问题按细则分类处置，记进 log.md。
   - [x] 2.7 带 owner 按场景逐条走查段一（开发版，owner 要求时在他的 Mac 上起）：存错 key 再发消息、正常开关一次看生命周期行；每条明确回答对或不对，记进 log.md。
 - [ ] 3. 段二 · 崩溃、启动失败与菜单入口（守验收 8–12、15、19）
-  - [ ] 3.0 段二第一步：把 Open 里标「段二第一步」的几件做掉（先写红的用例再修的照做），删掉临时探针，把走查时 lead 定的两条补记进 decisions「agent 自定」。
-  - [ ] 3.1 测试的前置：不经 Playwright 的启动方式（照 `apps/desktop/e2e/single-instance.spec.ts` 直接 spawn），验收 10、11、15 要用；Playwright 起的 Electron 自带禁用转储的开关（E7）。
-  - [ ] 3.2 测试作者按本段的验收写测试：`child-process-gone` 用假的 EventEmitter，文件头写明它复现了真依赖的哪几条行为；验收 9 用 Playwright 在主进程里替换 `dialog.showErrorBox` 再抛错；验收 11 用假的 dialog、exit 断言顺序，e2e 把 `<profileDir>/mcp` 换成同名文件、直接 spawn、等 `app.startup-failed` 再 SIGKILL；验收 15 先跑正对照；验收 17 的 SIGTERM 在 e2e 里走「srt 还没装监听」那一支，登记之后的那一支由 `registerSandboxSignals` 的单元测试守。跑红、单独提交、log.md 记「测试作者提交」。
-  - [ ] 3.2.1 走查的端到端用例（owner 2026-11-28「做，段二一起」）：Playwright 起真应用（内存钥匙串、假的模型服务返回 401、不读开发环境的 key），在设置界面里存一把假 key，从输入框发一条消息，断言日志里有那次失败、没有 key、没有消息内容；进 CI 的 e2e。
-  - [ ] 3.2.2 走查报告：同一组 e2e 跑完后生成一页报告（每个场景：截图、日志原始的一行、整理后的样子、逐条检查的 ✓/✗），作为 CI 产物；段一的四个场景与段二的场景都在里面，崩溃与启动失败的提示框用截图。原始的一行放在整理的样子前面。
-  - [ ] 3.3 实现者：`watchProcessExits`、`watchUncaught`、`reportStartupFailure`、`openLogsFolder`、菜单。文案进 `apps/desktop/src/i18n/locales/{en,zh-CN}`，过 `pnpm i18n:check` 与 `copy:check`。`menu-template.test.ts` 里开发构建那条（`help.learnMore` 一项）与打包构建那条（没有 Help）、`menu.test.ts` 的对应断言都要改，各在 log.md 写「测试改动」一行。验收 8、9、14、15 照 P1–P3 的结果写好了，不再改。
-  - [ ] 3.4 文档同步：`SECURITY.md` 加日志一段；overview 的模块一行与 §信任边界 的「密钥」一句；`docs/ux/components.md` 的「应用菜单」与它的「## 修订」一行。
+  - [x] 3.0 段二第一步：把 Open 里标「段二第一步」的几件做掉（先写红的用例再修的照做），删掉临时探针，把走查时 lead 定的两条补记进 decisions「agent 自定」。
+  - [x] 3.1 测试的前置：不经 Playwright 的启动方式（照 `apps/desktop/e2e/single-instance.spec.ts` 直接 spawn），验收 10、11、15 要用；Playwright 起的 Electron 自带禁用转储的开关（E7）。
+  - [x] 3.2 测试作者按本段的验收写测试：`child-process-gone` 用假的 EventEmitter，文件头写明它复现了真依赖的哪几条行为；验收 9 用 Playwright 在主进程里替换 `dialog.showErrorBox` 再抛错；验收 11 用假的 dialog、exit 断言顺序，e2e 把 `<profileDir>/mcp` 换成同名文件、直接 spawn、等 `app.startup-failed` 再 SIGKILL；验收 15 先跑正对照；验收 17 的 SIGTERM 在 e2e 里走「srt 还没装监听」那一支，登记之后的那一支由 `registerSandboxSignals` 的单元测试守。跑红、单独提交、log.md 记「测试作者提交」。
+  - [x] 3.2.1 走查的端到端用例（owner 2026-11-28「做，段二一起」）：Playwright 起真应用（内存钥匙串、假的模型服务返回 401、不读开发环境的 key），在设置界面里存一把假 key，从输入框发一条消息，断言日志里有那次失败、没有 key、没有消息内容；进 CI 的 e2e。
+  - [x] 3.2.2 走查报告：同一组 e2e 跑完后生成一页报告（每个场景：截图、日志原始的一行、整理后的样子、逐条检查的 ✓/✗），作为 CI 产物；段一的四个场景与段二的场景都在里面，崩溃与启动失败的提示框用截图。原始的一行放在整理的样子前面。
+  - [x] 3.3 实现者：`watchProcessExits`、`watchUncaught`、`reportStartupFailure`、`openLogsFolder`、菜单。文案进 `apps/desktop/src/i18n/locales/{en,zh-CN}`，过 `pnpm i18n:check` 与 `copy:check`。`menu-template.test.ts` 里开发构建那条（`help.learnMore` 一项）与打包构建那条（没有 Help）、`menu.test.ts` 的对应断言都要改，各在 log.md 写「测试改动」一行。验收 8、9、14、15 照 P1–P3 的结果写好了，不再改。
+  - [x] 3.4 文档同步：`SECURITY.md` 加日志一段；overview 的模块一行与 §信任边界 的「密钥」一句；`docs/ux/components.md` 的「应用菜单」与它的「## 修订」一行。
   - [ ] 3.5 段二收尾：同 2.6。
   - [ ] 3.6 段二走查：owner 不动手，读 3.2.2 的报告（CI 产物，lead 取下来给 owner），每条明确回答对或不对，记进 log.md；段一没看到的场景四（连接器日志只有本人能读）与「开发启动方式下 `ver` 是 Tenon 的版本」也在报告里。只有报告替代不了的才请 owner 亲手做：「帮助 → 打开日志文件夹」点一下（验收 19）。真弹框会不会卡住窗口由 e2e 的截图与用例看，看不出来的写明。
 - [ ] 4. 「以后再说」登记下面这些，每条一行；「渲染层没有错误边界……」那一条原样留着、不动：
@@ -55,17 +55,13 @@
 
 ## 交接
 
-2026-11-28：段一全部做完，在 PR #101（`feat/error-logs-seg1`）：代码、三轮评审与修复、评审记录（审过 916d8b9，通过）、owner 走查（9 条都对）。owner 当天补定 D21–D26。下一步：owner 点名合并 #101；然后段二，从 Open 里标「段二第一步」的几件开始（先把走查时 lead 定的两条补记进 decisions「agent 自定」），并删掉临时探针 `apps/desktop/e2e/probe-unhandled-rejection.spec.ts` 与 `helpers/probe-unhandled-rejection-preload.cjs`。段二仍是测试作者与实现者分开；ready 之后要加规则或放宽数字，先问 owner 再写。
+2026-11-28：段一全部做完，在 PR #101（`feat/error-logs-seg1`）：代码、三轮评审与修复、评审记录（审过 916d8b9，通过）、owner 走查（9 条都对）。owner 当天补定 D21–D26。下一步：owner 点名合并 #101；然后段二，从 Open 里标「段二第一步」的几件开始（先把走查时 lead 定的两条补记进 decisions「agent 自定」）（临时探针已删）。段二仍是测试作者与实现者分开；ready 之后要加规则或放宽数字，先问 owner 再写。
 
 ## Open
 
-- 段二第一步：沙箱自检按预期被拦时不记警告（走查看到；连同版本号那条，开工时补记进 decisions「agent 自定」）。
 - 段二走查（3.6）：用正常的开发启动方式起，确认 `ver` 是 Tenon 的版本；配一个连接器，补看段一场景四（连接器日志只有本人能读）。
 
-- 段二第一步：长于 4096 字的值重复登记时不排到最新、计数会涨（复验的突变 N2）：先写红的用例再修。
-- 段二第一步：`apps/desktop/src/main/log/redact.ts` 里 `REDACT_INPUT_LIMIT` 上的注释写的最坏耗时不实，改成 D26 的实测数。
-- 段二第一步：spec 全文超过 heavy 档上限几十个字符（警告），文档同步时压掉。
-- 段二第一步：spec「一万个开头相同的值…仍在毫秒级」改成实测的数（最后核对的建议）。
+- 第 3.4 步文档同步时：spec 全文超过 heavy 档上限约 500 个字符（警告），压掉。
 
 - （已定）加了 `unhandledRejection` 监听后退出码不变、只少那两行警告，照现稿（log.md 探针一行）。
 - OAuth 令牌在存进钥匙串之后才登记（kernel `mcp/oauth.ts`）：要 owner 点名多动 kernel 一处才能改；第 4 步登记进「以后再说」。

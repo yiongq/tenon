@@ -1,7 +1,12 @@
 import type { AbsolutePath } from '@tenon-app/kernel'
 import { appLog, logsDirOf } from './log/app-log.js'
-import { summarizeError } from './log/redact.js'
-import { logRouteFailures, watchRendererConsole } from './log/watch.js'
+import { openLogsFolder, reportStartupFailure } from './log/startup-failure.js'
+import {
+  logRouteFailures,
+  watchProcessExits,
+  watchRendererConsole,
+  watchUncaught,
+} from './log/watch.js'
 import { createSensitivePathProvider } from './host/sensitive-paths.js'
 // oxlint-disable-next-line import/default -- electron-vite emits this worker factory from the query
 import SchemaThread from './mcp/schema-thread.mjs?nodeWorker'
@@ -95,6 +100,20 @@ function background(): string {
   return windowBackground(nativeTheme.shouldUseDarkColors, tokensCss)
 }
 
+/** The folder the app log is opened on: the profile's `logs` (`main()` and a start failure both use it). */
+function openAppLog(): void {
+  appLog.open(
+    logsDirOf(profileDirFor(absolutePath(app.getPath('userData')), LOCAL_USER_ID, LOCAL_TENANT_ID)),
+    {
+      version: app.getVersion(),
+      packaged: app.isPackaged,
+      home: absolutePath(app.getPath('home')),
+      // The folder the app lives in: the resources of an installed Tenon, the package in development.
+      appDir: absolutePath(app.isPackaged ? process.resourcesPath : app.getAppPath()),
+    },
+  )
+}
+
 /** The one document a Tenon window may show: the dev server in development, the built file otherwise. */
 function appUrl(): string {
   const devUrl = process.env['ELECTRON_RENDERER_URL']
@@ -165,14 +184,12 @@ async function main(): Promise<void> {
     arch: process.arch,
     userData,
   })
-  appLog.open(logsDirOf(profileDirFor(absolutePath(userData), LOCAL_USER_ID, LOCAL_TENANT_ID)), {
-    version: app.getVersion(),
-    packaged: app.isPackaged,
-    home: absolutePath(app.getPath('home')),
-    // The folder the app lives in: the resources of an installed Tenon, the package in development.
-    appDir: absolutePath(app.isPackaged ? process.resourcesPath : app.getAppPath()),
-  })
+  openAppLog()
   app.on('will-quit', () => appLog.close())
+  // What nobody caught and the processes Electron loses, from here on (error-logs §记什么): a crash or
+  // an error before the file is there waits in the log's buffer. No `uncaughtException` listener.
+  watchProcessExits(app, appLog)
+  watchUncaught(process, appLog)
   // First, before loadDevEnv: Bash's fallback environment is the one Tenon was started with, never
   // `.env.local` (spec 02 §内置工具与参数「Bash」); so is the origin map seam's (M6 §点名「测试接缝」).
   const startupEnv = snapshotEnv(process.env)
@@ -385,8 +402,19 @@ async function main(): Promise<void> {
     // tell it up front that it is a new chat, or it would restore the conversation just left.
     else openWindow(true)
   }
+  // 「帮助 → 打开日志文件夹」: `shell.openPath` and `dialog.showErrorBox` are read off their objects at the
+  // moment of the call, never taken out or kept (the e2e replaces both on the objects). The box that
+  // follows a failed open speaks the language of the menu that was clicked.
+  const openLogs = (): void => {
+    void openLogsFolder({
+      dir: appLog.dir,
+      openPath: (path) => shell.openPath(path),
+      showErrorBox: (title, content) => dialog.showErrorBox(title, content),
+      languages: [locale.current],
+    })
+  }
   const installMenu = (): void => {
-    Menu.setApplicationMenu(buildApplicationMenu(locale.i18n, newChat))
+    Menu.setApplicationMenu(buildApplicationMenu(locale.i18n, newChat, openLogs))
   }
   locale.onChange(() => {
     installMenu()
@@ -520,14 +548,29 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
+/** The system's languages for a box that may be shown before the locale controller exists. */
+function systemLanguages(): readonly string[] {
+  try {
+    return preferredSystemLanguages()
+  } catch {
+    return []
+  }
+}
+
 void startSingleInstance(
   app,
   () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0],
   main,
 ).catch((error: unknown) => {
-  appLog.write('error', {
-    event: 'app.startup-failed',
-    error: summarizeError(error, appLog.redact),
+  // Line, wait for ready, box, exit 1 (error-logs §启动失败). `dialog.showErrorBox` is read at the
+  // moment of the call, as in the Help menu.
+  void reportStartupFailure({
+    error,
+    log: appLog,
+    openFallback: openAppLog,
+    whenReady: () => app.whenReady(),
+    showErrorBox: (title, content) => dialog.showErrorBox(title, content),
+    exit: (code) => app.exit(code),
+    languages: systemLanguages(),
   })
-  app.exit(1)
 })

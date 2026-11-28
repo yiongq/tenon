@@ -138,3 +138,17 @@
 - 走查补记（2026-11-28）：owner 自己 `cat` 了日志原文，先说「好像不太一样」——lead 给看的是整理过的表（去掉了 `v`、`ver`、`pid` 和转义的反斜杠），和文件里一行一条 JSON 的样子对不上；对照讲清之后，owner 对场景二、三的 6 条回答：「对」。段一走查的 9 条都有了明确回答，全部是对；场景四留到段二走查补看。
 - 试点记数更新：「这不是我以为的」1 次（展示的样子和真实文件不一样，不是功能不对）。以后走查先给原始的一行，再给整理过的表。
 - 走查方式改了（2026-11-28）：owner「这一步是否能做成回归测试啥的呢 用playwright 我这样去看太累了」，之后回「做，段二一起」。段二起走查由 Playwright 在 CI 跑并出一页报告，owner 只读报告逐条回答（plan 3.2.1、3.2.2、3.6）。
+
+## 实施 · 段二
+
+- 第 3.0 步（2026-11-28；新子 agent，先交测试再改）：测试 eb83866；修复 060cb84（沙箱自检按预期被拦时不记那一行）；注释 1f6eab3；删探针 63f59ec。没有削弱测试，只追加了用例和一句断言。
+- 更正上面段一评审记录里的一句：N2（长值重复登记）那条写了「实现也不对」，不成立——e737d7b 之后查重和存放用的都是截过的值，HEAD 上没有缺陷；那个存活的突变只说明当时没有用例盯着。这一步补了 3 条用例（重做的 N2 突变会让其中两条红），没改 `registry.ts`。
+- 自检那一行的做法：每次启动生成的自检 id 既交给沙箱、也记在启动结果上，「对不上命令的违规」里 key 与它完全相等的不记（不用前缀匹配，免得沙箱里的程序伪造 key 把自己的行压掉）。代价：自检因别的原因失败时，它名下的违规行也不记，但失败本身仍报 `unavailable (self-test-failed)`。
+- 测试作者提交：063cc60（2026-11-28；新子 agent，只读 spec、evidence、plan，没看段二的实现）。验收 8、9、11、12 的单元用例红在找不到模块或函数；验收 9、15 的静态扫描与验收 17 登记之后那一支的用例现在就绿（守已有行为）；e2e（验收 8–11、15、走查）只写了文件，等 CI。走查报告的生成代码在 `apps/desktop/e2e/helpers/walkthrough-report.ts`，十个场景各一节，页面写到 `apps/desktop/reports/walkthrough/index.html`，随 CI 的 e2e-report 产物带出。
+- 测试作者指出 spec 说不清的八处（`openLogsFolder` 的 `dir` 为 null、「日志也没能写下」的英文文案、失败框里的路径写不写成 `~`、`zh-TW` 与混排的优先级、`showErrorBox` 抛错时退不退、Help 项的键名、`process.gone` 没有 `name` 时、渲染进程 `clean-exit`）：测试都没把它们写死；实现时按最保守的做，做完连同别的小决定一起列给 owner。
+- 测试改动：apps/desktop/test/menu-template.test.ts · 「packaged, … no Reload, no Toggle Developer Tools, no Help」改名为「…Help holds only Open Logs Folder」，「development, … keeps Reload, Toggle Developer Tools and Help」改名为「…and the Learn More placeholder」 · spec §打开日志文件夹、验收 12 要求菜单模板在两种构建下都带「打开日志文件夹」：打包构建的 Help 原先断言没有，现改成断言有且只有 `help.openLogs`；开发构建的 Help 原先只有 `help.learnMore`，现在是 `help.openLogs` 在前、`help.learnMore`（仍不可点）在后。只改与新菜单项冲突的断言；其余断言没动，`build` 助手多传一个 `onOpenLogs`（`MenuOptions` 多了这个成员）。
+- 测试改动：apps/desktop/test/menu.test.ts · 「a packaged app gets the user menu: full screen only under View, no Help」改名为「…Help holds only Open Logs Folder」，「an unpackaged app keeps Reload, Toggle Developer Tools and Help」改名为「…and the Learn More placeholder」 · 同上：`buildApplicationMenu` 多了 `onOpenLogs` 参数（调用多传一个空函数），打包构建的 Help 原先断言没有，现改成断言只有 `help.openLogs`；开发构建多断言 Help 里是 `help.openLogs`、`help.learnMore`。`viewRoles` 与 View 菜单的断言没动。
+- 测试改动：apps/desktop/e2e/probe-unhandled-rejection.spec.ts · probe (temporary): an unhandled rejection in the main process, as it is and with an empty listener · 临时探针（plan 2.0），结果已记进本文件、开放问题 1 已关，段二第一步按计划删除（63f59ec）。
+- 测试改动：apps/desktop/e2e/helpers/probe-unhandled-rejection-preload.cjs · （探针的预加载脚本，没有断言） · 随上一条一起删除（63f59ec）。
+- 实现者提交：ee6be10（2026-11-28；另一个新子 agent；中途因网络断线重启过一次，重启时工作区是干净的），菜单两条测试改动记在 05a1ea1。lead 随后删掉两个测试辅助文件头里讲 `@ts-expect-error` 的过期注释，断言没动。
+- 文档同步（plan 3.4）：`SECURITY.md` 加「Error log」一段；overview 模块表加一行、§信任边界「密钥」一句改写；`docs/ux/components.md` 应用菜单一行与修订一行。

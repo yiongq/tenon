@@ -363,3 +363,67 @@ it(
     ])
   },
 )
+
+/** 5000 characters: 904 more than redaction looks at, so it is registered by its first 4096. */
+const LONG = 'Zq7#'.repeat(1_250)
+/** What `redact` makes of `LONG` while it is registered, and while it is not (the mark counts all). */
+const LONG_TAKEN = '[redacted]…(+904)'
+const LONG_SHOWN = `${'Zq7#'.repeat(1_024)}…(+904)`
+
+it(
+  'error-logs 验收 3: a value of more than 4096 characters registered fifty times takes one place: the oldest ordinary value is not let go before the table is full',
+  { timeout: 120_000 },
+  () => {
+    const { log } = openLog({ packaged: true })
+    log.remember(secret(0))
+    for (let again = 0; again < 50; again += 1) log.remember(LONG)
+    // The first, the long one and 9 998 more: 10 000 places, none let go yet.
+    for (let i = 1; i <= 9_998; i += 1) log.remember(secret(i))
+    expect(log.redact(`a ${secret(0)} b`)).toBe('a [redacted] b')
+    expect(log.redact(LONG)).toBe(LONG_TAKEN)
+    expect(log.redact(`a ${secret(9_998)} b`)).toBe('a [redacted] b')
+
+    // The 10 001st: the first goes, the long one stays.
+    log.remember(secret(9_999))
+    expect(log.redact(`a ${secret(0)} b`)).toBe(`a ${secret(0)} b`)
+    expect(log.redact(LONG)).toBe(LONG_TAKEN)
+    expect(log.redact(`a ${secret(1)} b`)).toBe('a [redacted] b')
+  },
+)
+
+it(
+  'error-logs 验收 3: a value of more than 4096 characters registered again moves to the newest: with the table full, the one let go is the one registered longest ago',
+  { timeout: 120_000 },
+  () => {
+    const { log } = openLog({ packaged: true })
+    // The long value is the oldest; 9 999 more fill the table.
+    log.remember(LONG)
+    for (let i = 0; i <= 9_998; i += 1) log.remember(secret(i))
+    // It is read again: the newest now, and no new place.
+    log.remember(LONG)
+    log.remember(secret(9_999))
+    expect(log.redact(LONG)).toBe(LONG_TAKEN)
+    // The first ordinary value is the one that has gone the longest without being registered.
+    expect(log.redact(`a ${secret(0)} b`)).toBe(`a ${secret(0)} b`)
+    expect(log.redact(`a ${secret(1)} b`)).toBe('a [redacted] b')
+    expect(log.redact(`a ${secret(9_999)} b`)).toBe('a [redacted] b')
+  },
+)
+
+it(
+  'error-logs 验收 3: a value of more than 4096 characters registered three times is let go once, everywhere, when it is the one registered longest ago',
+  { timeout: 120_000 },
+  () => {
+    const { log } = openLog({ packaged: true })
+    for (let again = 0; again < 3; again += 1) log.remember(LONG)
+    for (let i = 0; i <= 9_998; i += 1) log.remember(secret(i))
+    expect(log.redact(LONG)).toBe(LONG_TAKEN)
+    // The 10 001st lets the long value go; nothing of it is taken out any more.
+    log.remember(secret(9_999))
+    expect(log.redact(LONG)).toBe(LONG_SHOWN)
+    expect(log.redact(`gateway said: ${LONG.slice(0, 40)}…`)).toBe(
+      `gateway said: ${LONG.slice(0, 40)}…`,
+    )
+    expect(log.redact(`a ${secret(0)} b`)).toBe('a [redacted] b')
+  },
+)

@@ -1,11 +1,12 @@
 /**
- * The two watchers of segment one (docs/features/error-logs/spec.md §记什么): a request from the
- * window that came back `ok: false`, and the errors a window's page leaves on its console. Each is
- * handed what it watches and the log; neither imports electron.
+ * The watchers (docs/features/error-logs/spec.md §记什么): a request from the window that came back
+ * `ok: false`, the errors a window's page leaves on its console, an Electron process that went
+ * away, and an error nobody in the main process caught. Each is handed what it watches and the log;
+ * none imports electron.
  */
 import type { IpcError, IpcMainLike } from '@tenon-app/contracts'
 import type { AppLog } from './app-log.js'
-import { redactAndCut } from './redact.js'
+import { redactAndCut, summarizeError } from './redact.js'
 
 const RENDERER_MESSAGE_LIMIT = 300
 const RENDERER_SOURCE_LIMIT = 200
@@ -95,4 +96,99 @@ export function watchRendererConsole(
       repeats: 1,
     })
   })
+}
+
+/** `value` when it is a finite integer, else `fallback` (an exit code Electron did not give). */
+function integerOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isInteger(value) ? value : fallback
+}
+
+/** `value` when it is a non-empty string, else null. */
+function textOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value !== '' ? value : null
+}
+
+/**
+ * Logs an Electron process that went away (acceptance 8): `render-process-gone` is the window's
+ * renderer, `child-process-gone` any other child Electron manages (GPU, utility, …); the event
+ * says which, not the details. A process that left cleanly is not a failure and leaves no line.
+ * Neither event covers a Node `child_process` or a normal quit (E4, P3). The listeners never
+ * throw: an error here would be a second uncaught error from inside the report of the first.
+ */
+export function watchProcessExits(
+  app: {
+    on(
+      event: 'render-process-gone',
+      listener: (event: unknown, contents: unknown, details: unknown) => void,
+    ): unknown
+    on(event: 'child-process-gone', listener: (event: unknown, details: unknown) => void): unknown
+  },
+  log: AppLog,
+): void {
+  const note = (processName: string, details: unknown): void => {
+    try {
+      const fields = (typeof details === 'object' && details !== null ? details : {}) as {
+        reason?: unknown
+        exitCode?: unknown
+        name?: unknown
+      }
+      const reason = textOrNull(fields.reason) ?? 'unknown'
+      if (reason === 'clean-exit') return
+      const name = textOrNull(fields.name)
+      log.write('error', {
+        event: 'process.gone',
+        process: processName,
+        reason,
+        exitCode: integerOr(fields.exitCode, -1),
+        ...(name === null ? {} : { name }),
+      })
+    } catch {
+      // a details object that cannot be read is not worth a second failure
+    }
+  }
+  app.on('render-process-gone', (_event, _contents, details) => {
+    note('renderer', details)
+  })
+  app.on('child-process-gone', (_event, details) => {
+    let type = 'unknown'
+    try {
+      type = textOrNull((details as { type?: unknown } | null)?.type) ?? type
+    } catch {
+      // the type stays unknown
+    }
+    note(type, details)
+  })
+}
+
+/**
+ * Logs what nobody in the main process caught (acceptance 9). An exception goes to Node's
+ * `uncaughtExceptionMonitor`, which only watches: Electron's own error box and its "do not quit"
+ * stay as they are, and no `uncaughtException` listener is added, because one would take that box
+ * away (P2). A lone Promise rejection never reaches the monitor in Electron (P2), so it has a
+ * listener of its own that only writes a line. The line's origin is the event that fired, not the
+ * `origin` argument the monitor passes.
+ */
+export function watchUncaught(
+  proc: {
+    on(event: 'uncaughtExceptionMonitor', listener: (error: Error, origin: string) => void): unknown
+    on(
+      event: 'unhandledRejection',
+      listener: (reason: unknown, promise: Promise<unknown>) => void,
+    ): unknown
+  },
+  log: AppLog,
+): void {
+  const note = (origin: 'uncaughtException' | 'unhandledRejection', error: unknown): void => {
+    try {
+      log.write('error', {
+        event: 'main.uncaught',
+        origin,
+        error: summarizeError(error, log.redact),
+      })
+    } catch {
+      // never throw out of a handler of the error that is being reported
+    }
+  }
+  proc.on('uncaughtExceptionMonitor', (error) => note('uncaughtException', error))
+  proc.on('unhandledRejection', (reason) => note('unhandledRejection', reason))
 }
