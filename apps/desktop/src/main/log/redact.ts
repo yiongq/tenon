@@ -30,11 +30,15 @@ const FUNCTION_THROWN = '[function]'
 
 /**
  * The most characters of one string that taking secrets out of it looks at (spec §怎么写「脱敏的
- * 工作量有上界」): what is past it was going to be cut off anyway, and a longer value is not
- * registered. What a lookup costs is the length of the string times the length of the longest
- * value; this keeps both within a few tens of milliseconds.
+ * 工作量有上界（D25）」): what is past it is cut off, and a registered value or spelling longer than
+ * it is registered by its first characters up to it. A lookup follows the text through the tree of
+ * registered words from every place in it, no further than the longest word, so a string costs at
+ * most about half this limit squared steps (some 8 million). Measured on a
+ * development machine, a text of 1 MB met 4089 registered values that are each the start of the
+ * next in 35–60 ms, and one value of this length in under 20 ms; words that branch off a long run
+ * they share cost 100–180 ms, which is the worst shape found. The spec's bound is 200 ms.
  */
-export const REDACT_INPUT_LIMIT = 16_384
+export const REDACT_INPUT_LIMIT = 4_096
 
 /** A string cut to `REDACT_INPUT_LIMIT`, and how many characters of it were left out. */
 export interface BoundedText {

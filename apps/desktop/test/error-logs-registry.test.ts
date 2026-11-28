@@ -334,3 +334,32 @@ it(
     ])
   },
 )
+
+it(
+  'error-logs 验收 3: a value that is the start of another stays found when the other is let go, and what is left of the other is no longer taken out',
+  { timeout: 120_000 },
+  () => {
+    const short = 'Kp7w-tenant-key-01'
+    const rest = 'Rr4xTt8vWw2y-Uu5z'
+    const long = `${short}${rest}`
+    const { log } = openLog({ packaged: true })
+    // The longer one is registered first, so it is the first to be let go.
+    log.remember(long)
+    log.remember(short)
+    const field = (): string[] => [
+      log.redact(`a ${short} b`),
+      log.redact(`a ${long} b`),
+      log.redact(`gateway said: ${long.slice(0, 30)}…`),
+    ]
+    expect(field()).toEqual(['a [redacted] b', 'a [redacted] b', 'gateway said: [redacted]…'])
+    // 9 998 more make 10 000, one more lets the longer go.
+    for (let i = 1; i <= 9_998; i += 1) log.remember(lone(i))
+    expect(field()).toEqual(['a [redacted] b', 'a [redacted] b', 'gateway said: [redacted]…'])
+    log.remember(lone(9_999))
+    expect(field()).toEqual([
+      'a [redacted] b',
+      `a [redacted]${rest} b`,
+      `gateway said: [redacted]${rest.slice(0, 12)}…`,
+    ])
+  },
+)

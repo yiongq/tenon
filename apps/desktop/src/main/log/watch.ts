@@ -66,7 +66,7 @@ function fileNameOf(sourceId: string): string {
 
 /**
  * Logs the page's errors: only those of level `error`, their first line (redacted, then cut to 300;
- * of a line longer than 16 384 characters only the start is looked at, and the count of what was
+ * of a line longer than 4096 characters only the start is looked at, and the count of what was
  * cut is still of the whole line), the file's name and the line number. A run of the same error is
  * one line and a count; that is `AppLog`'s to merge (`renderer.error`).
  */

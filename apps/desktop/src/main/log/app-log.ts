@@ -62,13 +62,13 @@ export interface AppLog {
   /** For a module's existing `log: (line: string) => void`. */
   line(source: string, level: LogLevel): (text: string) => void
   /**
-   * Registers a secret (not under 8 characters, not over 16 384) so that it is taken out of every
-   * line.
+   * Registers a secret (not under 8 characters; one over 4096 by its first 4096) so that it is
+   * taken out of every line.
    */
   remember(secret: string): void
   /**
    * `text` with the secrets, the folders and the common token formats taken out. Only the first
-   * 16 384 characters are looked at: of a longer text the rest is left out and `…(+N)` says how
+   * 4096 characters are looked at: of a longer text the rest is left out and `…(+N)` says how
    * much.
    */
   redact(text: string): string
@@ -323,7 +323,7 @@ export function createAppLog(options: AppLogOptions): AppLog {
     return result
   }
 
-  /** Any string: what is past the first 16 384 characters is not looked at; the mark says how much. */
+  /** Any string: what is past the first 4096 characters is not looked at; the mark says how much. */
   const redact = (text: string): string => {
     const bounded = boundInput(text)
     const result = redactWithin(bounded.text)
