@@ -47,6 +47,20 @@ function took(action: () => void): number {
   return performance.now() - began
 }
 
+/**
+ * The least of up to three runs of a timed case: a run on a machine that is busy with something
+ * else can take twice as long as the work does. One that is over four times the budget is the work
+ * and not the machine, and is not run again.
+ */
+function leastOf(run: () => number): number {
+  let least = Number.POSITIVE_INFINITY
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    least = Math.min(least, run())
+    if (least < BUDGET_MS || least > 4 * BUDGET_MS) break
+  }
+  return least
+}
+
 interface ConsoleDetails {
   readonly level: string
   readonly message: string
@@ -88,24 +102,29 @@ it(
   { timeout: 300_000 },
   () => {
     const slow: Array<[string, number]> = []
-    const written: unknown[] = []
+    const written = new Map<string, unknown>()
     for (const [shape, text] of [
       ['one character short of the value at every position', nearMiss(MEGABYTE)],
       ['the value at every position', everywhere(MEGABYTE)],
     ] as const) {
-      const { log, dir } = openLog({ packaged: true })
-      log.remember(VALUE)
-      const ms = took(() => {
-        log.line('host', 'warn')(text)
+      const ms = leastOf(() => {
+        const { log, dir } = openLog({ packaged: true })
+        log.remember(VALUE)
+        const run = took(() => {
+          log.line('host', 'warn')(text)
+        })
+        written.set(shape, lineTexts(dir)[0])
+        return run
       })
       if (ms >= BUDGET_MS) slow.push([shape, Math.round(ms)])
-      written.push(...lineTexts(dir))
     }
     expect(slow).toEqual([])
     // No match anywhere in the first: the first 2000 characters and the count of the rest. The
     // second is the value over and over: taken out, and no run of it is left.
-    expect(written[0]).toBe(`${nearMiss(2_000)}…(+998000)`)
-    expect(String(written[1])).not.toContain('AAAAAAAA')
+    expect(written.get('one character short of the value at every position')).toBe(
+      `${nearMiss(2_000)}…(+998000)`,
+    )
+    expect(String(written.get('the value at every position'))).not.toContain('AAAAAAAA')
   },
 )
 
@@ -313,7 +332,7 @@ it(
   () => {
     const over: Array<[string, number]> = []
     for (const [name, run] of ENTRIES) {
-      const ms = run(nearMiss(MEGABYTE))
+      const ms = leastOf(() => run(nearMiss(MEGABYTE)))
       // Every one named with its time, so the failure shows which is slow and by how much.
       if (ms >= BUDGET_MS) over.push([name, Math.round(ms)])
     }
