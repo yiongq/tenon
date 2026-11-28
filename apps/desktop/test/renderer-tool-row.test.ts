@@ -63,6 +63,8 @@ const context = vi.hoisted(() => ({
   answered: new Map<string, Answered>(),
   expanded: false,
   profile: 'cowork',
+  // The root session's snapshot numbers by call; none unless a test sets them.
+  snapshotCalls: [] as { callKey: string; snapshotId: string }[],
 }))
 vi.mock('react', async (importOriginal) => {
   const actual = await importOriginal<typeof React>()
@@ -81,6 +83,31 @@ vi.mock('../src/renderer/src/runtime/ChatProvider', () => ({
   }),
 }))
 vi.mock('../src/renderer/src/runtime/mcp-store', () => ({ useMcp: () => ({ servers: [] }) }))
+vi.mock('../src/renderer/src/runtime/SnapshotProvider', () => ({
+  useSnapshotRounds: () => ({
+    sessionId: 'session-1',
+    data:
+      context.snapshotCalls.length === 0
+        ? null
+        : {
+            ok: true,
+            status: 'tree',
+            rounds: [
+              {
+                roundRunId: 'round-1',
+                runIds: ['round-1'],
+                endMessageId: null,
+                calls: context.snapshotCalls,
+                canRestore: true,
+                incompleteCoverage: false,
+                commandsWithoutSnapshot: false,
+              },
+            ],
+            incompleteRestores: [],
+          },
+    refresh: async () => null,
+  }),
+}))
 
 let en: I18n
 let zh: I18n
@@ -742,3 +769,71 @@ it.each(['allow', 'ask', 'deny'] as const)(
     }
   },
 )
+
+function bash(reversibility: 'unknown' | 'irreversible'): ToolOutcomeViewContract {
+  return {
+    effect: 'write',
+    reversibility,
+    state: 'completed',
+    source: null,
+    output: 'ok',
+    isError: false,
+  }
+}
+
+it('command-undo-copy 验收 3: an expanded Bash row with a snapshot number says its files can be restored; without one, or irreversible, it keeps its sentence; other tools are unchanged', async () => {
+  expect(toolRowEffect(bash('unknown'), 'Bash', true)?.undoKey).toBe('confirm.undo.commandRestored')
+  expect(toolRowEffect(bash('unknown'), 'Bash', false)?.undoKey).toBe('confirm.undo.unknown')
+  expect(toolRowEffect(bash('unknown'), 'Bash')?.undoKey).toBe('confirm.undo.unknown')
+  expect(toolRowEffect(bash('irreversible'), 'Bash', true)?.undoKey).toBe('confirm.irreversible')
+  for (const name of ['Write', 'Edit', 'Delete', 'notes__echo', 'WebFetch']) {
+    for (const reversibility of [
+      'read-only',
+      'revertible',
+      'snapshotted',
+      'irreversible',
+      'unknown',
+    ] as const) {
+      const outcome = { ...bash('unknown'), reversibility }
+      expect(toolRowEffect(outcome, name, true), `${name}/${reversibility}`).toEqual(
+        toolRowEffect(outcome, name, false),
+      )
+    }
+  }
+  const expected = {
+    'zh-CN': {
+      restored:
+        '运行了这条命令 · 它改的文件能随这一轮还原；联网发出的、.git 里的和被排除的文件撤不回。',
+      old: '运行了这条命令 · 如果它改了东西，Tenon 没法替你撤回。',
+    },
+    en: {
+      restored:
+        "Ran this command · Files it changed can be restored with this round; anything sent online, in .git, or excluded can't.",
+      old: "Ran this command · If this changes anything, Tenon can't undo it.",
+    },
+  } as const
+  context.expanded = true
+  try {
+    for (const i18n of [zh, en]) {
+      const copy = expected[i18n.language as keyof typeof expected]
+      context.snapshotCalls = [{ callKey: 'call-1', snapshotId: 'snapshot-1' }]
+      // oxlint-disable-next-line no-await-in-loop -- with and without a snapshot number, both locales
+      expect(didText(await renderRow(null, 'Bash', {}, i18n, false, bash('unknown')))).toBe(
+        copy.restored,
+      )
+      context.snapshotCalls = [{ callKey: 'another-call', snapshotId: 'snapshot-1' }]
+      // oxlint-disable-next-line no-await-in-loop -- another call's number is not this call's
+      expect(didText(await renderRow(null, 'Bash', {}, i18n, false, bash('unknown')))).toBe(
+        copy.old,
+      )
+      context.snapshotCalls = []
+      // oxlint-disable-next-line no-await-in-loop -- no snapshot read model at all
+      expect(didText(await renderRow(null, 'Bash', {}, i18n, false, bash('unknown')))).toBe(
+        copy.old,
+      )
+    }
+  } finally {
+    context.expanded = false
+    context.snapshotCalls = []
+  }
+})

@@ -57,10 +57,10 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
   const input = (props.args ?? {}) as Readonly<Record<string, unknown>>
   const outcome = (props.result ?? null) as ToolOutcomeViewContract | null
   const why = open ? unaskedReason(outcome) : null
-  const effect = toolRowEffect(outcome, props.toolName)
-  const marker = toolMarker(outcome)
   const rounds = useSnapshotRounds()
   const saved = callSnapshot(rounds.data?.rounds ?? [], callKey)
+  const effect = toolRowEffect(outcome, props.toolName, saved !== null)
+  const marker = toolMarker(outcome)
   const pending =
     snapshot.pending?.waitKind === 'approval' && snapshot.pending.anchorCallKey === callKey
       ? snapshot.pending

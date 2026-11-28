@@ -889,6 +889,8 @@ it('presentation-r1 验收 14: no mechanism words on the card, its collapsed lin
     'confirm.undo.snapshotted',
     'confirm.undo.unknown',
     'confirm.undo.unknownFile',
+    'confirm.undo.commandRestorable',
+    'confirm.undo.commandRestored',
     'confirm.undo.network.search',
     'confirm.undo.network.url',
     'confirm.allow',
@@ -1156,5 +1158,29 @@ it('05 验收 52: every promised skip explains the earlier snapshot promise in b
         ? '这个文件在这一轮里或之后可能被别处改过，还原会盖掉那些改动。要覆盖还是保留？'
         : 'This file may have been changed elsewhere during or after this round. Restoring would overwrite those changes. Overwrite or keep?',
     )
+  }
+})
+
+it('command-undo-copy 验收 4: both locales carry the two command restore sentences as the spec writes them, with no mechanism words', () => {
+  const expected = {
+    'zh-CN': {
+      'confirm.undo.commandRestorable':
+        '它改的文件一般能随这一轮还原；联网发出的、.git 里的和被排除的文件撤不回。',
+      'confirm.undo.commandRestored':
+        '它改的文件能随这一轮还原；联网发出的、.git 里的和被排除的文件撤不回。',
+    },
+    en: {
+      'confirm.undo.commandRestorable':
+        "Files it changes can usually be restored with this round; anything sent online, in .git, or excluded can't.",
+      'confirm.undo.commandRestored':
+        "Files it changed can be restored with this round; anything sent online, in .git, or excluded can't.",
+    },
+  } as const
+  expect([...SUPPORTED_LOCALES].toSorted()).toEqual(Object.keys(expected).toSorted())
+  for (const locale of SUPPORTED_LOCALES) {
+    for (const [key, text] of Object.entries(expected[locale])) {
+      expect(lookup(locale, key), `${locale}: ${key}`).toBe(text)
+      expect(text).not.toMatch(/模型|沙箱|inspector|model|sandbox/iu)
+    }
   }
 })

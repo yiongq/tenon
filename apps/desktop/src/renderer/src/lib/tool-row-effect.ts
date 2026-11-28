@@ -22,7 +22,15 @@ export function toolCategory(name: string) {
     : 'connector'
 }
 
-export function toolRowEffect(outcome: ToolOutcomeViewContract | null, toolName: string) {
+/**
+ * `hasSnapshot`: this call has a snapshot number in the root session's rounds. A Bash call with
+ * one says its files come back with the round (command-undo-copy); nothing else reads it.
+ */
+export function toolRowEffect(
+  outcome: ToolOutcomeViewContract | null,
+  toolName: string,
+  hasSnapshot?: boolean,
+) {
   if (!outcome) return null
   const category = toolCategory(toolName)
   const reversibility = outcome.reversibility ?? 'unknown'
@@ -43,7 +51,9 @@ export function toolRowEffect(outcome: ToolOutcomeViewContract | null, toolName:
           ? ('confirm.irreversible' as const)
           : reversibility === 'unknown' && (category === 'write' || category === 'delete')
             ? ('confirm.undo.unknownFile' as const)
-            : (`confirm.undo.${reversibility}` as const),
+            : reversibility === 'unknown' && category === 'command' && hasSnapshot === true
+              ? ('confirm.undo.commandRestored' as const)
+              : (`confirm.undo.${reversibility}` as const),
     marker: toolMarker(outcome) !== null,
     loginServerId:
       outcome.source === 'connector-unauthorized' ? serverIdOfMappedName(toolName) : null,
