@@ -14,7 +14,7 @@
 ## 步骤
 
 - [ ] 1. 改 ready 之前
-  - [ ] 1.1 lead 把四个文件放进仓库的那个 PR 里：总参考阶段表加一行（目录 `docs/features/packaging`，一句话「安装包与草稿发布，从阶段 7 提前的部分」，状态 draft，关键决策「草稿 Release、ad-hoc 签名、只发 zip 与 deb（D2、D6）」）；跑 `python3 .sdd/spec-check.py` 与 `python3 .sdd/spec-check.py --index`。总参考有行数上限 1200，现在 1161 行。
+  - [x] 1.1 lead 把四个文件放进仓库的那个 PR 里：总参考阶段表加一行（目录 `docs/features/packaging`，一句话「安装包与草稿发布，从阶段 7 提前的部分」，状态 draft，关键决策「草稿 Release、ad-hoc 签名、只发 zip 与 deb（D2、D6）」）；跑 `python3 .sdd/spec-check.py` 与 `python3 .sdd/spec-check.py --index`。总参考有行数上限 1200，加完这一行是 1168 行。
   - [ ] 1.2 挑刺评审（heavy）：新上下文，至少「规则与证据」「机制与安全」「测试」三个视角，只给代码与文档、不给起草者的结论；带证据的发现修进 spec，结论与处置记进 log.md。
   - [x] 1.3 探针 P1–P6（四轮 CI 跑完，2026-11-28；结论在 evidence.md）：在 CI 草稿 PR 里跑（owner 已同意，D14；草稿 PR 只放探针用的 workflow 与脚本，不合并、不开自动合并；不在 owner 的 Mac 上起 Electron）。不必等 error-logs：先看 stderr 与静态检查。原始输出进私有笔记，结论写进 evidence.md 的「实际结果」，按「结果是 X 就改什么」改 spec 与开放问题。
   - [ ] 1.4 P7（人工）：owner 在自己的 Mac 上做（做法见「需要你」），批 ready 之前做完，结果写进 evidence.md 与发布说明。
@@ -46,13 +46,13 @@
 
 ## 交接
 
-2026-11-28：探针四轮全部跑完（只剩人工的 P7），结果写进 evidence.md，照分支改了 spec：Linux 冒烟不改系统设置、发布说明写 24.04 与 26.04 的实情、验收 2、4 去掉「依次」并注明 Chromium 自己的 stderr 不算；26.04 的新事实记成 E17，plan 2.6 加了登记「以后再说」的一行。没写代码，没提交。下一步：owner 做 P7；error-logs implemented 后请 owner 批 ready。
+2026-11-28：探针四轮全部跑完（只剩人工的 P7），结果写进 evidence.md，照分支改了 spec；四个文件随 daae933 提交，在 PR #98，总参考阶段表加了一行（1.1 做完）。#98 的合并前评审指出的几处（冒烟命令统一成 `open -n -a`、E5/E8/E15/E16 跟上探针结果、验收 2 的「第一行」说清）已改。没写代码。下一步：owner 做 P7；error-logs implemented 后做 1.5，再请 owner 批 ready。
 
 ## Open
 
 - P7 待 owner（spec 开放问题 1）。
 - 冒烟进不进 `ci-ok`（spec 开放问题 2）：owner 定，合并后至少跑过两次 tag 再定。
-- 总参考行数余量：上限 1200，现在 1161；1.1 与 2.6 要加约 11 行，够用，之后的 spec 余量更小。
+- 总参考行数余量：上限 1200，现在 1168（1.1 的一行已加）；2.6 还要加约 10 行，够用，之后的 spec 余量更小。
 
 ## 验收矩阵
 
@@ -61,7 +61,7 @@
 | 验收号 | 层 | 测试用例名 | 门禁命令 | 突变 | 平台 |
 |---|---|---|---|---|---|
 | 1 | 单元 | packaging 验收 1: a tag that differs from the desktop version fails before packaging | test | — | 任意 |
-| 2 | e2e | packaging 验收 2: the macOS zip opens with open -a, logs start, window and an active sandbox, then quits cleanly | test | — | macOS |
+| 2 | e2e | packaging 验收 2: the macOS zip opens with open -n -a, logs start, window and an active sandbox, then quits cleanly | test | — | macOS |
 | 3 | e2e | packaging 验收 3: the macOS helpers are real executables under Resources and never inside the asar | test | — | macOS |
 | 4 | e2e | packaging 验收 4: the deb installs in one go and starts with the Chromium sandbox on and an active sandbox | test | — | Linux |
 | 5 | 单元 | packaging 验收 5: the desktop package.json keeps its name without productName; the packaged userData ends in Tenon | test | — | macOS、Linux |

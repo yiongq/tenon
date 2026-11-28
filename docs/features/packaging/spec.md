@@ -128,7 +128,7 @@ export interface McpPoolOptions { /* 已有成员不动 */ readonly clientVersio
 ## 验收标准
 
 1. tag 与 `apps/desktop/package.json` 的版本号不一致时，release 工作流在打包之前失败、不建 Release；一致时往下走。
-2. macOS 包：CI 在 `macos-15` 上打出文件名带版本号的 arm64 zip，解开是 ad-hoc 签名、能过 `codesign --verify` 的 Tenon.app；用 `open -a` 起，日志里启动（安装版、版本号对）是第一行，窗口出来了、沙箱生效都出现；收到 SIGTERM 后正常退出是最后一行、运行标记被删；期间日志里没有错误级的行（Chromium 自己打到 stderr 的 runner 环境报错，如 macOS 的 XPC、Linux 的 DBus，不进日志，不算）（平台：macOS）。
+2. macOS 包：CI 在 `macos-15` 上打出文件名带版本号的 arm64 zip，解开是 ad-hoc 签名、能过 `codesign --verify` 的 Tenon.app；用 `open -n -a` 起，日志里启动（安装版、版本号对）是这次启动的第一行（上次没正常退出时，「上次没正常退出」那一行可以排在它前面），窗口出来了、沙箱生效都出现；收到 SIGTERM 后正常退出是最后一行、运行标记被删；期间日志里没有错误级的行（Chromium 自己打到 stderr 的 runner 环境报错，如 macOS 的 XPC、Linux 的 DBus，不进日志，不算）（平台：macOS）。
 3. macOS 包里两个沙箱 helper 是 asar 外、有执行位的真实文件，app.asar 里没有 sandbox-runtime 的 vendor 目录；日志里交给沙箱的三条路径是包的资源目录本身或它下面的文件、都不含 `.asar`（平台：macOS）。
 4. Linux 包：CI 在 `ubuntu-24.04` 上打出 x64 的 deb，`apt-get install` 一次装成（连同 bubblewrap、socat、ripgrep）；桌面入口的启动命令不带 `--no-sandbox`，照它启动、什么系统设置都不改，Chromium 沙箱开着，日志里有启动、窗口出来了、沙箱生效和正常退出，期间日志里没有错误级的行（Chromium 自己打到 stderr 的 runner 环境报错，如 macOS 的 XPC、Linux 的 DBus，不进日志，不算）（平台：Linux）。
 5. 安装版的数据在名为 Tenon 的目录（macOS `~/Library/Application Support/Tenon`，Linux `~/.config/Tenon`）；开发模式的应用名与数据目录照旧是 `@tenon-app/desktop`（平台：macOS、Linux）。

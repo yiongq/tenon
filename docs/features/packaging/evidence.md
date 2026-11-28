@@ -29,10 +29,10 @@
 - 什么时候重核：升 @napi-rs/keyring 时（2.1.2 起 macOS 预编译件带别人的 Team ID）。
 
 ### E5 · macOS 钥匙串按签名身份放行
-- 结论：文件钥匙串的每个条目有 ACL，按调用方签名的 designated requirement 认人，不认路径和版本；认不出就弹框，可选拒绝、允许、始终允许。ad-hoc 签名的 designated requirement 绑在那一份代码的 cdhash 上。按整包 ad-hoc 签名时 Info.plist 与资源（含 app.asar）都进了签名，内容或版本一变 cdhash 就变，这是推断（P4 实测）。开发用的 Electron 是另一个身份，所以开发版存的条目，安装版第一次读会弹框。
+- 结论：文件钥匙串的每个条目有 ACL，按调用方签名的 designated requirement 认人，不认路径和版本；认不出就弹框，可选拒绝、允许、始终允许。ad-hoc 签名的 designated requirement 绑在那一份代码的 cdhash 上。按整包 ad-hoc 签名时 Info.plist 与资源（含 app.asar）都进了签名，内容或版本一变 cdhash 就变（P4 实测成立）。开发用的 Electron 是另一个身份，所以开发版存的条目，安装版第一次读会弹框。
 - 一手来源：https://developer.apple.com/documentation/security/access-control-lists ；https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements ；https://developer.apple.com/forums/thread/115425
-- 核查：ACL 与 ad-hoc 身份确认，「每次重新打包 cdhash 都变」是推断（核实文件 02 的 C16）。
-- 什么时候重核：P4、P7 跑完时；改签名方式时。
+- 核查：ACL 与 ad-hoc 身份确认，「版本或内容一变 cdhash 就变」由 P4 实测确认（同源码同配置打两次不变）；弹框的样子等 P7。
+- 什么时候重核：P7 跑完时；改签名方式时。
 
 ### E6 · GitHub runner 与 Ubuntu 上的沙箱
 - 结论：`ubuntu-latest` 从 2026-10-19 起分批迁到 Ubuntu 26.04（计划 11-19 迁完）；`macos-15` 是 arm64，`ubuntu-24.04` 是 x64。04 的实测：24.04 上把 `kernel.apparmor_restrict_unprivileged_userns` 设成 0 沙箱就生效；26.04 上设 0 自检仍失败（apply-seccomp 的嵌套命名空间被限）；装 04 修法里的 bwrap AppArmor 配置后两版都生效。实测在 Lima 的 arm64 镜像上，不是 GitHub 的 x64 镜像（P3 复测）。所以打包与冒烟的 Linux job 钉 `ubuntu-24.04`，「26.04 上沙箱不可用」进已知限制。
@@ -47,7 +47,7 @@
 - 什么时候重核：升 electron-builder 时。
 
 ### E8 · electron-builder 的 Linux 目标
-- 结论：deb 的安装后脚本在 AppArmor 启用、且支持 `abi/4.0` 时，给 `/opt/<产品名>/<可执行文件>` 装一份带 `userns` 的 profile（`flags=(unconfined)`）；只在内核不支持用户命名空间时才给 `chrome-sandbox` 设 SUID。这能不能让 Chromium 沙箱在 24.04 上开着，没实装验证（P3）。deb 必须有作者邮箱或 `linux.maintainer`，还要 homepage 或 repository 之一（读不到 .git 时）；构建时下载 fpm。AppImage（26 默认的 legacy 运行时）生成的桌面入口无条件带 `--no-sandbox`，还要 FUSE。
+- 结论：deb 的安装后脚本在 AppArmor 启用、且支持 `abi/4.0` 时，给 `/opt/<产品名>/<可执行文件>` 装一份带 `userns` 的 profile（`flags=(unconfined)`）；只在内核不支持用户命名空间时才给 `chrome-sandbox` 设 SUID。P3 实测：24.04 与 26.04 上装了 deb 之后 Chromium 沙箱都开着。deb 必须有作者邮箱或 `linux.maintainer`，还要 homepage 或 repository 之一（读不到 .git 时）；构建时下载 fpm。AppImage（26 默认的 legacy 运行时）生成的桌面入口无条件带 `--no-sandbox`，还要 FUSE。
 - 一手来源：https://registry.npmjs.org/app-builder-lib/-/app-builder-lib-26.18.0.tgz （`templates/linux/after-install.tpl`、`templates/linux/apparmor-profile.tpl`、`out/targets/FpmTarget.js`、`out/appInfo.js`、`out/targets/AppImageTarget.js`）
 - 核查：确认；「必须有 homepage」更正为 homepage 或 repository 之一（核实文件 01 的 (9) 与 C48）。
 - 什么时候重核：升 electron-builder 时。
@@ -89,16 +89,16 @@
 - 什么时候重核：P7 跑完时；macOS 大版本更新时。
 
 ### E15 · Electron 的应用名从哪来
-- 结论：Electron 44.4.1 的类型说明写：应用名取应用 package.json 的 `name`，同时写了 `productName` 时优先用 `productName`。开发模式（electron-vite 起 `apps/desktop`）读的就是 `apps/desktop/package.json`，所以 productName 一写进去，开发模式的应用名、数据目录和单实例锁都会跟着变。打包版读包内的 package.json；electron-builder 会不会把配置里的 productName 写进包内的 package.json，没查（P6）。
+- 结论：Electron 44.4.1 的类型说明写：应用名取应用 package.json 的 `name`，同时写了 `productName` 时优先用 `productName`。开发模式（electron-vite 起 `apps/desktop`）读的就是 `apps/desktop/package.json`，所以 productName 一写进去，开发模式的应用名、数据目录和单实例锁都会跟着变。打包版读包内的 package.json；只在 electron-builder 配置里写 productName 时，包内的 `app.name` 不变；要经 `extraMetadata.productName` 注入（P6 实测）。
 - 一手来源：npm 包 electron@44.4.1 的 `electron.d.ts`（`App.getName` 的说明）；https://github.com/electron/electron/blob/v44.4.1/docs/api/app.md
-- 核查：起草者 2026-11-28 读本机安装的 electron@44.4.1 类型说明，未经对抗核实；P6 实测。
-- 什么时候重核：P6 跑完时；升 Electron 大版本时。
+- 核查：起草者 2026-11-28 读本机安装的 electron@44.4.1 类型说明，未经对抗核实；打包版那一半由 P6 实测确认。
+- 什么时候重核：升 Electron 大版本时。
 
 ### E16 · electron-builder 默认的产物文件名带包名
 - 结论：electron-builder 26.18.0 的 Linux 产物默认文件名以 `${name}` 开头，`apps/desktop` 的包名是 `@tenon-app/desktop`，带一个斜杠；fpm 于是要写进一个不存在的子目录，报 `Parent directory does not exist: …/@tenon-app`，deb 打不出来。修法是在配置里写 `linux.artifactName`，不带包名。
 - 一手来源：探针第一、二轮的构建日志（run 46082661569、46084382965 的 Linux 构建步骤，另记）。
-- 核查：两轮 CI 实测，两个 Ubuntu runner 都一样；改了 `artifactName` 之后打不打得出等第三轮。
-- 什么时候重核：第三轮探针跑完时；升 electron-builder 或改包名时。
+- 核查：两轮 CI 实测，两个 Ubuntu runner 都一样；改了 `artifactName` 之后第三、四轮都打出了 deb（P1）。
+- 什么时候重核：升 electron-builder 或改包名时。
 
 ### E17 · Ubuntu 26.04 上，04 的 bwrap 修法不够
 - 结论：Ubuntu 26.04 自带 `bwrap-userns-restrict`（定义了给 bwrap 的子 profile `unpriv_bwrap`）。只照 04 §启动、自检与姿态 第 6 步的修法再写一份给 bwrap 的 AppArmor 配置，内核里仍有 `unpriv_bwrap (enforce)`，内核日志记 `apparmor="DENIED" operation="capable" profile="unpriv_bwrap" comm="apply-seccomp" capname="sys_admin"`，沙箱仍是 `userns-restricted`。先用 `apparmor_parser -R` 卸掉系统自带的那份、再装那份配置，内核里只剩 `bwrap (unconfined)`，沙箱才生效。sysctl 设 0 也不行。

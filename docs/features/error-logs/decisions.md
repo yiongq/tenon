@@ -86,7 +86,7 @@
 - C 不管。代价：同一个文件夹里有别的用户读得到的文件。
 
 选错难退吗：不难。
-结果：A · 2026-11-28（问卷）。这也是 owner 对「改 03」的点名同意（§对 03 的增补 第二条）。
+结果：A · 2026-11-28（问卷）。卡面写明了这一项要给 03 加一条增补（§对 03 的增补 第二条）；owner 的原话没有单独点 03，对 03 的改动随「error-logs 改 ready」一并批准。
 
 ### D19 · kernel 拼出的 OAuth 令牌怎么交给日志去登记
 背景：D16 要求「拼出令牌时当场登记」。MCP 的 OAuth 令牌在钥匙串里是分片存的（base64url 的 JSON 切成几片），client secret 在整段 JSON 里，拼出整段的是 kernel（`packages/kernel/src/mcp/token-store.ts`、`oauth.ts`），desktop 包住 `host.secrets` 只看得到片与 JSON（E8）。要拿到裸值，就得改 03 已合入的接口，所以出卡。
