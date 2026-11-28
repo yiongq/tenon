@@ -4,7 +4,7 @@
 
 ## 当前 / 需要你
 
-当前：第 0.1、1–11 步做完（第 9–11 步在分支 `feat/claude-5-5-seg3`）。下一步第 12 步：官方 key 的 live 冒烟，开跑前先问你（读钥匙串会弹窗，要花钱，花费上限由你定）。
+当前：第 0.1、1–12 步做完（第 12 步 2026-11-28，官方 key live 冒烟全过，分支 `feat/claude-5-5-live`）。下一步第 13 步：页头成对。
 需要你：无
 授权：本 spec 由 Codex 实现的 PR，lead 评审、CI 绿后由 lead 开自动合并；碰门禁文件、涉及花费或安全取舍、改 Status 时仍问 owner · 到本 spec `implemented` 为止 · 「一路推进 (Recommended)」（2026-10-23 问卷，题目「Codex 的 PR 经我评审、CI 绿了之后，我自己开自动合并，还是每个都先问你？」）
 
@@ -118,7 +118,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 - [x] 11. 第一把 key 的「有」一支（spec §跟随最新「谁写指针」「迁移」，`Related:`）。不改 presentation-r1 的 spec 与 plan。2026-10-23 核过：presentation-r1 已在 `dev` 上，按第一种情形做（写第一把 key 的代码在 apps/desktop/src/main/custom-vendors/store.ts 的 `firstKeyDefaults`）。两种情形原文：
   - presentation-r1 写第一把 key 的代码已在 `dev` 上（只有钉住一支）：实现它 §对 02 的修补 第 1 条已写的「有」一支，那次写入的值取第 9 步 `menuSelectionOf` 对那一行给出的值（内置带家族的行给指针，实例给钉住）；触发条件、写哪几个键、写在哪一次 config 写入里、失败行为都照它那一条。它验收 12 钉住一例的测试按它验收 12 的写法换成指针一例（`dev` 上已有 `latestOf`）。跑验收 19（就是它验收 12 的指针一例），结果记进 log.md。它合入之后、本步合入之前不切 release 分支；本步合入的那个 PR 里一并删掉总参考「以后再说」里「claude-5-5-models 合入之前不切 release 分支」那一行。
   - 还不在 `dev` 上：本步不做事，记一句「『有』一支由 presentation-r1 plan 第 9 步实现，验收 19 由它验收 12 的指针一例验」，勾掉。不因此等它，也不因此不标 `implemented`。
-- [ ] 12. 〔开放问题 6 定 A〕官方 live 冒烟（验收 12）。**先提醒 owner 钥匙串会弹窗**，等回话再跑。
+- [x] 12. 〔开放问题 6 定 A〕官方 live 冒烟（验收 12）。2026-11-28 做完：官方组两行各 3 passed，新加三例 3 passed，花费约 0.1 美元（上限 2 美元），记录见 log「实施 · 2026-11-28」。**先提醒 owner 钥匙串会弹窗**，等回话再跑。
   - 官方组两次，`TENON_LIVE_ANTHROPIC_OFFICIAL_MODEL` 分别取 `claude-sonnet-5-5`、`claude-haiku-5-5`（命令见上，带 `--grep`，不连带跑搜索探测、前缀探测和智谱各组）。
   - apps/desktop/e2e/live-official-agent.spec.ts 照「Opus 5.5 performs actual threshold compaction in the product loop」加两例。官方协议接缝都用 `record` 模式：`strict` 会把 `thinking` 改写成带 `block_binding` 的 adaptive（apps/desktop/src/main/host/official-protocol-test-seam.ts:52-58），盖掉 `between_tools`；`evidence()` 相应传 `strict: false`。两例都在压缩前先跑一轮工具调用：照「performs a real WebSearch round trip and workspace Read smoke」那例，`startTask` 进一个工作区，让模型 Read 一个文件一次并 `allow`，这样摘要请求会回放一对 tool_use / tool_result（生产里最常见的形态；原 Opus 例每轮都不用工具，没覆盖到）。判据分两处读（spec 验收 12）：
     - 「Sonnet 5.5 performs actual threshold compaction after choosing low effort」：Read 那一轮之后用 `session.selectModel` 把 effort 设成 `'low'`（文件里的 `choose()` 传的是 `effort: null`，这里另传 low），再跑两轮，然后照原例带 `TENON_E2E_COMPACTION_THRESHOLD=1` 重启触发压缩。线上（重启后 `evidence(app, false, journal)` 的 `last.wire[0]` 是摘要请求）：`body.tools` 没有，`body.thinking` 是 `{ type: 'between_tools' }`，`body.output_config.effort === 'high'`，`status === 200`。Tape：摘要 attempt（`provider/attempt_completed` 带 `compaction` 的那条）的快照是 `{ thinking: { enabled: false }, effort: 'high' }`；压缩后主请求的快照带 `effort: 'low'`。
@@ -145,7 +145,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 
 ## 交接
 
-- 2026-10-24：第 9–11 步由 Codex 按任务说明实现，lead 审查（主进程的解析、数据去向检查在会话不换之后照做、菜单写指针与只改档不写默认、`provider.select` 的 `latestOf`、设置卡、第一把 key 的「有」一支）并在沙箱外补跑全量 vitest；第 8 步突变 ⑤⑥ 已回头做完。改了的 e2e（model-menu、provider-settings、recovery）只过了 typecheck，由本段 PR 的 CI 首跑；第 10 步的 4 个突变只有 e2e 能抓。总参考「以后再说」里「合入前不切 release 分支」一行随本段删除。下一步第 12 步（要 owner 回话）。
+- 2026-11-28：第 12 步做完。新加三条 live 用例在 apps/desktop/e2e/live-official-agent.spec.ts 最后一个 describe；官方组两行各 3 passed、新加三例 3 passed，线上全部 200，花费约 0.1 美元；vendors.md 七行回写实测结果。下一步第 13 步（页头成对，跑 spec-check 的 pairs），再第 14 步逐条核对验收与全量 e2e（走 CI），第 15 步清理后派评审。
 
 ## Open
 

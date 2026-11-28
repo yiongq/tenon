@@ -205,3 +205,21 @@
 - [建议] 「档位子菜单触发外发确认再点切换」时 `intent` 是否保持 `effort` 没有断言 · 不修：e2e 已覆盖档位子菜单与 hold 确认两条路径，这条组合路径等第 14 步全量核对时补
 结论：通过
 突变：model-routes.ts 的三个 `intent` 分支与预读各一个，共 4 个，全部变红；renderer 两处 `intent` 改成 `row` 只有新 e2e 能抓，由 CI 首跑
+
+## 实施 · 2026-11-28（第 12 步，官方 key live 冒烟，验收 12）
+
+- owner 2026-11-28 定花费上限 2 美元（「按 2 美元开跑」，spec 修订记录一行）；钥匙串 `tenon-live-anthropic` 由 owner 当天更新，读前已提醒会弹窗。key 只进各条命令的环境，记录里 grep 过没有 `sk-ant`、没有鉴权头。
+- 新加三例（apps/desktop/e2e/live-official-agent.spec.ts 最后一个 describe，标题带「claude-5-5-models 验收 12」，record 模式，不串行）：Sonnet 5.5 选 low 后阈值压缩、Haiku 5.5 默认档阈值压缩，两例都先在任务里 Read 一次；两行各问两次六因数题。`save()` 加了可选的文件名后缀，同一例里两个模型各存一份。
+- 构建：dev `07470ca` 加本分支改动，`pnpm build` 后直接跑 desktop 的 `test:live`。
+- 官方组（「live provider · anthropic official」3 例）：`claude-sonnet-5-5` 3 passed（14.3 s），`claude-haiku-5-5` 3 passed（12.0 s）。
+- 新加三例：3 passed（48.4 s），线上请求全部 200，`captureFailures` 都为空。
+  - Sonnet 5.5 压缩：Read 一轮 2 个请求，选 low 后两轮各 1 个（`output_config.effort: low`），重启后摘要请求 `thinking: { type: 'between_tools' }`、`output_config: { effort: 'high' }`、不带 tools、messages 里有 tool_result，200；Tape 摘要 attempt 快照 `{ thinking: { enabled: false }, effort: 'high' }`，压缩后主请求快照 `effort: 'low'`。
+  - Haiku 5.5 压缩：同样 6 个请求，摘要请求 `{ type: 'disabled' }` 加 high、不带 tools、有 tool_result，200；Tape 快照同上；其余请求是 `adaptive` 加 `summarized`、不带 effort。
+  - 缓存与思考：两行第一个请求 input 4、缓存写 2 146（提示 2 150 > 512），第二个请求缓存读 2 146。思考块：Sonnet 第一问 535 字、第二问没有；Haiku 两问 952、259 字；Haiku 压缩例 Read 那一轮 93 字。全部非空。
+- 用量（每个 attempt，input / output / 缓存读 / 缓存写）：
+  - Sonnet 压缩：4/112/0/4880 · 2/20/4880/133 · 4/10/4880/192 · 4/10/5072/49 · 摘要 4/413/0/1132 · 4/12/0/5350
+  - Haiku 压缩：4/112/0/4880 · 2/21/4880/133 · 4/35/5013/60 · 4/10/5073/76 · 摘要 4/338/0/1133 · 4/12/0/5275
+  - Sonnet 缓存：4/1143/0/2146 · 4/18/2146/1209；Haiku 缓存：4/1211/0/2146 · 4/97/2146/1277
+- 花费：新加三例按 Tape 用量与定义表价格算约 0.06 美元；官方组两次没留 Tape（通过的例子删配置目录），按请求数与提示长度估不到 0.05 美元；合计约 0.1 美元，远低于上限。账单以 Console 为准。
+- 结果回写 docs/reference/vendors.md 七行的「实测结果」与核实日期。原始记录在仓库外 tenon-notes/2026-11-28-c55-live/。
+- 观察：压缩后的主请求缓存读为 0、重写 5 千多 token，是摘要替换了历史前缀，符合预期。
