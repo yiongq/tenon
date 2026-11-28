@@ -25,10 +25,11 @@
 - 01 §所有权与依赖方向 ← 02
 - 01（整份） ← 04
 - 01 §保留命名空间 ← 05
-- 01 §desktop 接线 ← 06
+- 01 §desktop 接线 ← 06 ← claude-5-5-models
 - 01 §Provider 层 ← claude-5-5-models ← custom-vendors ← model-display-names
+- 01 §验收标准 ← claude-5-5-models
 - 01 §desktop 接线 的 `provider.configure` ← presentation-r1
-- 02 §主进程与 kernel 的循环接口 ← 06 ← 03
+- 02 §主进程与 kernel 的循环接口 ← 06 ← 03 ← claude-5-5-models
 - 02 §工具调用的收口 ← 04
 - 02 §可逆性 ← 05 ← 06
 - 02 §内置工具的默认档位 ← 05
@@ -52,6 +53,10 @@
 - 02 §权限 ← 06
 - 02 §授权 ← auto-tier-hardening
 - 02 §对 01-provider-and-tape 的修补 ← claude-5-5-models ← custom-vendors ← model-display-names
+- 02 §模型选择 ← claude-5-5-models
+- 02 §模型菜单与输入框 ← claude-5-5-models ← claude-5-5-models
+- 02 §记录格式与费用口径 ← claude-5-5-models
+- 02 §开工前裁决 ← claude-5-5-models
 - 02 §工具调用的收口 的工具结果视图 ← presentation-r1
 - 03 §地址与出网 ← 04
 - 03 §连接器卡 ← auto-tier-hardening
@@ -63,7 +68,7 @@
 - 05 §硬链接 ← auto-tier-hardening
 - 05 §已知限制与代价 ← auto-tier-hardening
 - custom-vendors §写入规则 的「新建」与「保存实例的 key」：第一次存 key ← presentation-r1
-- model-display-names §对 02 的修补「设置卡」 ← claude-5-5-models
+- model-display-names §对 02 的修补 ← claude-5-5-models
 - presentation-r1 §审批卡 ← 05 ← 06 ← 06 ← command-undo-copy
 - presentation-r1 §结算行 ← 05
 - presentation-r1 §工具行 ← 05 ← 05 ← 06 ← command-undo-copy

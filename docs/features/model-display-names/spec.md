@@ -1,6 +1,7 @@
 # 模型显示名
 
 Status: implemented
+Changed by: claude-5-5-models（§对 02 的修补）
 Clauses replaced by: [presentation-r1](../presentation-r1/spec.md)（2026-10-22：§对 02 的修补 末段、验收 3 的主机一句）
 Kind: features
 Owner: 起草在 Claude Code（2026-10-15），为已落在 `38d4a1b`（feat/ux-craft）的 `ModelInfo.nameKey` / `provider.list` 行的 `nameKey` 补写 amendment；owner 2026-10-15 在 PR #46 评审中接受
