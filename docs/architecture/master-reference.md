@@ -1108,6 +1108,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 | 6 | 待起草 | 聊天体验、记忆、知识库和 Research | 规划中 | Research 有单次预算上限 |
 | 6（原 4d） | `docs/features/task-mode-ui`（待起草） | 任务模式界面 | 规划中 | 2026-11-06 owner「4d 挪阶段 6」，在 06 之后起草 |
 | 6b | 待起草（host 在 `apps/server`） | 云端 host 和多租户 | 规划中 | 复用 kernel，跨租户隔离为硬门禁 |
+| 7（提前） | [packaging](../features/packaging/spec.md) | 安装包与草稿发布，从阶段 7 提前的部分 | draft | 草稿 Release、ad-hoc 签名、只发 zip 与 deb（packaging D2、D6） |
 | 7 | 待起草 | 产品化与发布 | 规划中 | 视觉替换、许可证扫描和平台签名公证 |
 
 ## 以后再说

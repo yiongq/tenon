@@ -15,7 +15,9 @@
 - [claude-5-5-models](features/claude-5-5-models/spec.md) · ready · Claude 5.5 两行与模型目录跟随最新 · 需要你：① 合 PR #100（删 `.sdd/config.json` 里本 spec 三条已失效的 pairs 已知项）。…
 - [command-undo-copy](features/command-undo-copy/spec.md) · implemented · 命令的审批卡和展开的工具行，按快照的实情说命令的改动能不能还原；能还原时不再写「没法替你撤回」。 · 需要你：无。log 里记了一条观察（还原之后展开行退回「没法替你撤回」那句），要不要排进以后由你提。
 - [custom-vendors](features/custom-vendors/spec.md) · implemented · 自定义厂商（M6） · 需要你：—
+- [error-logs](features/error-logs/spec.md) · ready · 把 Tenon 今天只打到控制台的报错写进本地日志文件，写之前去掉机密；启动失败时告诉你日志在哪。 · 需要你：spec 的 PR #98 评审过、CI 绿后由你合并（或开自动合并）。
 - [model-display-names](features/model-display-names/spec.md) · implemented · 模型显示名 · 需要你：—
+- [packaging](features/packaging/spec.md) · draft · 打 tag 时让 CI 打出 Mac 和 Linux 安装包，照用户的方式装上、打开、确认能用，再建一个只有你看得见的草稿发布。 · 需要你：现在不用批。P7 要你在自己的 Mac 上做，按「探针在批 ready 之前跑完」的规矩排在批 ready 之前：趁探…
 - [presentation-r1](features/presentation-r1/spec.md) · implemented · 呈现修订第一轮（presentation-r1） · 需要你：—
 
 ## 被改过的节
@@ -60,10 +62,13 @@
 - 02 §工具调用的收口 的工具结果视图 ← presentation-r1
 - 03 §地址与出网 ← 04
 - 03 §连接器卡 ← auto-tier-hardening
+- 03 §接口 ← error-logs ← packaging
+- 03 §本地 server：进程与环境 ← error-logs
 - 04 §档位计划写进判决 ← 06
 - 04 §告诉模型 ← 06
 - 04 §档位到 srt 配置 ← auto-tier-hardening
 - 04 §已知限制 ← auto-tier-hardening
+- 04 §依赖 ← packaging
 - 05 §给 06 的接口 ← 06
 - 05 §硬链接 ← auto-tier-hardening
 - 05 §已知限制与代价 ← auto-tier-hardening
