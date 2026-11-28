@@ -223,3 +223,5 @@
 - 花费：新加三例按 Tape 用量与定义表价格算约 0.06 美元；官方组两次没留 Tape（通过的例子删配置目录），按请求数与提示长度估不到 0.05 美元；合计约 0.1 美元，远低于上限。账单以 Console 为准。
 - 结果回写 docs/reference/vendors.md 七行的「实测结果」与核实日期。原始记录在仓库外 tenon-notes/2026-11-28-c55-live/。
 - 观察：压缩后的主请求缓存读为 0、重写 5 千多 token，是摘要替换了历史前缀，符合预期。
+
+测试改动：apps/desktop/e2e/live-official-agent.spec.ts · official Claude 5.5 rows（三例） · 新 describe 照文件里已有的付费套件加 `test.skip(!ENABLED)`：只有 `TENON_LIVE=1` 且 `TENON_LIVE_OFFICIAL_AGENT=1` 时跑，默认 e2e 与 CI 不收要官方 key、要花钱的用例；不是放宽已有断言
