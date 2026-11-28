@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：ready，段一在第 2.6 步（`feat/error-logs-seg1`，PR #101；spec 的 PR #98 等 owner 合）。两轮评审的发现都已处置：第一轮三视角（审 53b8165）3 major，修在 2cab2ec–b9bbff0；第二轮复审（审 f5a1784）1 blocker（四项新增机制没点名，owner 已定 D21–D24）、1 major（登记表查找退化），修在 926abb8–a1e3a9a。第 2.0 步的探针有结果：照现稿，开放问题 1 关掉。正在等第三轮复审（按细则 8 是最后一轮）。
-需要你：① 合并 spec 的 PR #98（CI 全绿）；② 第三轮复审通过后，段一走查（2.7）。
+当前：ready，段一第 2.6 步做完（`feat/error-logs-seg1`，PR #101）：三轮评审加一次收尾核对与复验，结论通过，记录在 log.md「评审 · 2026-11-28 · 审过 916d8b9」；owner 当天补定 D21–D26。下一步第 2.7 步：带 owner 走查段一（要在 owner 的 Mac 上起开发版，先问）。
+需要你：① 段一走查（2.7）：说一声可以在你的 Mac 上起开发版；② 走查过后点名合并 PR #101（它改了 `.oxlintrc.json` 与 `scripts/lint-gate.test.mjs`，是 lint 规则变严，不开自动合并）。
 
 ## 分段
 
@@ -28,7 +28,7 @@
   - [x] 2.3 实现者（另一个子 agent）：`log/redact.ts`、`log/app-log.ts`（格式、限量与来源表、轮转与抄写、文件保护、半行修补、内存缓存、运行标记）、`log/watch.ts` 的请求失败与界面报错；`host/sandbox.ts` 的「对不上命令的违规」接到 `sandbox-unattributed`。不削弱 2.2 的测试；非改不可时在 log.md 写「测试改动：文件 · 用例 · 为什么」。
   - [x] 2.4 接线：`index.ts` 的转发器、各模块 `log ?? console.warn` 的回落、`readConfig` 的缺省 log 改成写日志，级别照 `LogLevel` 的含义；`main()` 一开始 `open`，之后注册 `will-quit`；`host/index.ts` 的 `HostSecrets` 包上 `rememberingSecrets`；`provider.ts` 的环境变量回落处登记；`.oxlintrc.json` 给 `apps/desktop/src/main/**` 禁 `console` 与 `process.stderr`，只放过 `log/`。`apps/desktop/test/profile.test.ts` 那条走 `console.warn` 的用例按需改，改了在 log.md 写「测试改动」一行（E2）。
   - [x] 2.5 kernel：`loop/run.ts` 在尝试失败处加一行 `ctx.log`；`mcp/pool.ts` 加 `onSecret`（§对 03 的增补，D19）；desktop 的 `mcp/log-sink.ts` 以 0600 新建，启动时以不跟随链接的方式收紧已有文件。
-  - [ ] 2.6 段一收尾：`pnpm format:check && pnpm lint && pnpm typecheck`、`pnpm vitest run --maxWorkers=2`、`python3 .sdd/spec-check.py`；新上下文的独立评审分「对照 spec」「安全」「突变」三个视角，StrykerJS 只对改动过的文件跑、只出报告（本项目补充第 5 条）；带证据的问题按细则分类处置，记进 log.md。
+  - [x] 2.6 段一收尾：`pnpm format:check && pnpm lint && pnpm typecheck`、`pnpm vitest run --maxWorkers=2`、`python3 .sdd/spec-check.py`；新上下文的独立评审分「对照 spec」「安全」「突变」三个视角，StrykerJS 只对改动过的文件跑、只出报告（本项目补充第 5 条）；带证据的问题按细则分类处置，记进 log.md。
   - [ ] 2.7 带 owner 按场景逐条走查段一（开发版，owner 要求时在他的 Mac 上起）：存错 key 再发消息、正常开关一次看生命周期行；每条明确回答对或不对，记进 log.md。
 - [ ] 3. 段二 · 崩溃、启动失败与菜单入口（守验收 8–12、15、19）
   - [ ] 3.1 测试的前置：不经 Playwright 的启动方式（照 `apps/desktop/e2e/single-instance.spec.ts` 直接 spawn），验收 10、11、15 要用；Playwright 起的 Electron 自带禁用转储的开关（E7）。
@@ -42,15 +42,24 @@
   - 性能度量（启动打点、内存采样、CI 预算），单开一份小 spec · lead · error-logs implemented 之后 · error-logs §给你看的一页「不做」
   - MCP 日志的数量上限与脱敏（现在每台 3 份、台数不限，只换已知值） · lead · 有人要把日志文件夹整个发给别人之前 · error-logs D18
   - 页面没加载出来、界面卡死这两种白屏不进日志 · lead · 待定 · error-logs 挑刺评审（另记）
+  - 把限量挪到脱敏之前，免得连续的长消息占住主进程 · lead · 段二做完之后，单开小 spec · error-logs D26
+  - OAuth 令牌先登记、后存进钥匙串（要动 kernel `mcp/oauth.ts`，owner 点名） · owner · 下一次动 03 时 · error-logs 段一评审（另记）
+  - `kernel` 来源的行把提示与错误分开两个级别 · lead · 下一次动 kernel 的 log 回调时 · error-logs 段一评审（另记）
+  - 纯数字的登记值落在 `…(+N)` 里时截断标记被吞 · lead · 待定 · error-logs 段一复验（另记）
 - [ ] 5. 对照验收逐条核对；spec 的开放问题与本 plan 的 Open 要么写明已定，要么挪进「以后再说」；数验收条数与改动行数（本项目补充第 6 条「预算检查点」）。
 - [ ] 6. 清理：探针用的草稿 PR 关掉，探针 workflow 不留在仓库里。
 - [ ] 7. owner 验收 → 改 Status
 
 ## 交接
 
-2026-11-28：段一代码、两轮评审与两轮修复都在 `feat/error-logs-seg1`。每轮修复都是先交只含测试的提交（3720511、926abb8、040982f），再交修复。owner 当天补定四项（D21–D24）。lint 配置 `.oxlintrc.json` 与 `scripts/lint-gate.test.mjs` 被收紧（log.md 有「测试改动」）。没做的：OAuth 令牌先登记后存（要动 kernel `mcp/oauth.ts`，不在本 spec 批准的 kernel 改动里，第 4 步登记「以后再说」）；`kernel` 来源的行级别混着提示与错误（一个转发器分不开）。下一步：第三轮复审的结论写进 log.md 的评审记录（带结论与突变两行），再 2.7 带 owner 走查；段二开工前删掉临时探针 `apps/desktop/e2e/probe-unhandled-rejection.spec.ts` 与它的 preload。
+2026-11-28：段一代码、评审与修复都在 `feat/error-logs-seg1`（代码停在 e737d7b，之后只有文档提交），评审记录通过。spec 的 PR #98 已合入 dev。下一步：2.7 带 owner 走查（存错 key 再发消息、正常开关一次看生命周期行；每条明确回答对或不对，记进 log.md）。段二开工的第一步先做 Open 里标「段二第一步」的三件，并删掉临时探针 `apps/desktop/e2e/probe-unhandled-rejection.spec.ts` 与 `helpers/probe-unhandled-rejection-preload.cjs`。
 
 ## Open
+
+- 段二第一步：长于 4096 字的值重复登记时不排到最新、计数会涨（复验的突变 N2）：先写红的用例再修。
+- 段二第一步：`apps/desktop/src/main/log/redact.ts` 里 `REDACT_INPUT_LIMIT` 上的注释写的最坏耗时不实，改成 D26 的实测数。
+- 段二第一步：spec 全文超过 heavy 档上限几十个字符（警告），文档同步时压掉。
+- 段二第一步：spec「一万个开头相同的值…仍在毫秒级」改成实测的数（最后核对的建议）。
 
 - （已定）加了 `unhandledRejection` 监听后退出码不变、只少那两行警告，照现稿（log.md 探针一行）。
 - OAuth 令牌在存进钥匙串之后才登记（kernel `mcp/oauth.ts`）：要 owner 点名多动 kernel 一处才能改；第 4 步登记进「以后再说」。
