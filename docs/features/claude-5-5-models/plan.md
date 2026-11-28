@@ -5,7 +5,7 @@
 ## 当前 / 需要你
 
 当前：第 0.1、1–13 步做完（第 12 步官方 key live 冒烟全过；第 13 步页头成对，PR #99，评审见 log）。下一步第 14 步：对照验收 1–19 逐条核对，全量 e2e 走 CI。
-需要你：合 PR #100（删 `.sdd/config.json` 里本 spec 三条已失效的 pairs 已知项）。规则原文：plan 第 13 步「若报 config 里这份 spec 的已知项失效，删它们要改 `.sdd/config.json`（门禁文件），那一处交 owner 合」。顺序：先等 #97、#99 合入再合 #100，先合会让 dev 上 pairs 拦 3 条。改的代价：合一个只删 15 行的门禁文件 PR；不改的代价：这三条留着，以后有人删掉 01、02 那两行 `Changed by`，spec-check 不会拦（#99 评审突变 M1b、M1c 存活）。
+需要你：① 合 PR #100（删 `.sdd/config.json` 里本 spec 三条已失效的 pairs 已知项）。规则原文：plan 第 13 步「若报 config 里这份 spec 的已知项失效，删它们要改 `.sdd/config.json`（门禁文件），那一处交 owner 合」。顺序：#97 已于 2026-11-28 合入；等 #99 合入再合 #100，先合会让 dev 上 pairs 拦 3 条。改的代价：合一个只删 15 行的门禁文件 PR；不改的代价：这三条留着，以后有人只删掉 01 的 `§Provider 层` 或 02 的 `§对 01-provider-and-tape 的修补` 那一条 `Changed by`，spec-check 不会拦（#99 评审突变 M1b、M1c 存活；删整行照样会拦）。② 2026-10-23 交 owner、还没回的一条建议（log「审过 4550a17」）：docs/spec-driven-dev.md「本项目补充」第 9 条仍写「厂商现状表……本次不创建」，已过时（docs/reference/vendors.md 已建）；改这一节要你点名批准，改的代价是改一行说明，不改的代价是这条说明与仓库现状对不上。
 授权：本 spec 由 Codex 实现的 PR，lead 评审、CI 绿后由 lead 开自动合并；碰门禁文件、涉及花费或安全取舍、改 Status 时仍问 owner · 到本 spec `implemented` 为止 · 「一路推进 (Recommended)」（2026-10-23 问卷，题目「Codex 的 PR 经我评审、CI 绿了之后，我自己开自动合并，还是每个都先问你？」）
 
 ## 开工前读
@@ -145,7 +145,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 
 ## 交接
 
-- 2026-11-28：第 12、13 步做完。第 12 步是 PR #97（评审两轮，审过 a5356d1 通过，自动合并已开）；第 13 步是 PR #99（叠在 #97 上，评审见 log），删失效已知项的门禁文件改动另在 PR #100，由 owner 在 #97、#99 之后合。下一步第 14 步：逐条核对验收 1–19、跑 spec-check 确认 trace、全量 e2e 走 CI 草稿 PR；第 15 步清理后派评审。
+- 2026-11-28：第 12、13 步做完。第 12 步是 PR #97（评审两轮，审过 a5356d1 通过，2026-11-28 已合入 dev）；第 13 步是 PR #99（叠在 #97 上，评审见 log），删失效已知项的门禁文件改动另在 PR #100，由 owner 在 #99 之后合。下一步第 14 步：逐条核对验收 1–19、跑 spec-check 确认 trace、全量 e2e 走 CI 草稿 PR；第 15 步清理后派评审。
 
 ## Open
 
