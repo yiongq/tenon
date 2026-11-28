@@ -333,3 +333,13 @@
 - 全量 e2e：CI 的 e2e 作业跑的是 `xvfb-run pnpm test:e2e`（全量），278 expected、0 unexpected、0 flaky、6 skipped；跳过的 6 例都是 macOS 专属（composer-frame 2、navigation 1、stop-exit 3），与本 spec 无关。没有因会话不换变红的用例。
 - 全量 vitest：6233 例，6092 passed、0 failed、141 pending；macOS 作业 401 例，384 passed、0 failed、17 pending。
 - 这一步只核到「每条验收有点名用例且在 CI 上通过」；各用例的断言是否空心，留给第 15 步之后的评审逐条读。
+
+## 评审 · 2026-11-28 · 审过 b93481c
+结论：不通过    评审：派发会话起的独立子 agent，Opus 5.5，新上下文，没看作者对话；读评审包、log.md 全文、plan.md、`git diff 48331f2 b93481c`、总参考「以后再说」、docs/spec-driven-dev.md §6 §7 §8，逐条读验收 1–19 点名用例的断言和被测代码；用 `gh run download 46120326933` 取三份报告核对第 14 步，并在临时 worktree 里重跑 `spec-check --all --report`；没跑 live 与 e2e，没读钥匙串或 .env
+突变：16 个，在 b93481c 的临时 worktree 里跑，跑完已移除；先跑 18 个相关测试文件，没变红的再跑全量（全量基线有 6 例与改动无关的环境红，比对时扣除）；首跑存活 7 个：R5、R6、R15 相关加全量都绿，R5 记为 major，R6、R15 记为建议；R18、R19 只有 e2e 能抓（需 e2e，未跑；CI 上分别由 model-menu.spec.ts 验收 9 与 provider-settings.spec.ts 验收 17 抓）；R21、R22 是等价突变（Ollama 与实例的行没有 family）；其余 9 个变红
+发现：
+- [major] 验收 16 的「`provider.list` 的行带 `family` 与 `familyNameKey`」只对 anthropic 的 Sonnet 5 一行断言，智谱四行丢掉这两个键没有用例发现；后果是智谱设置卡不再列「最新的 GLM…」指针项，§跟随最新「谁写指针」要求 anthropic、智谱两张卡都先列指针，e2e 也只看 anthropic 卡和 Ollama 卡 · 证据：突变 R5（provider-routes.ts `menuRow` 的条件加 `|| definition.wire === 'openai-chat'`）相关 434 例与全量 6233 例都绿，全量只红基线上同样红的 6 例 · 待作者处置
+- [建议] log「验收核对 · 2026-11-28」写验收 13 有 19 例，CI 报告里标题点名验收 13 的用例是 10 例（model-families.test.ts 9 例加 definitions.test.ts「验收 1、13」1 例）；19 是把 describe 标题里的「验收 13」按 fullName 也算进去的 18 次再加 1；其余各条与全量 vitest、e2e 的数字都对得上 · 证据：`gh run download 46120326933` 的 vitest.json 按用例标题计数 · 待作者处置
+- [建议] Sonnet 5、Haiku 4.5 的用途句（数据表和开放问题 4 定的「上一代 Sonnet（旧版）」「上一代 Haiku（旧版）」）没有用例钉住值；验收 8 只查键在不在和占位符，验收 9 只看两新行 · 证据：突变 R6 把两份 locale 的这两句改回本 spec 之前的值，相关与全量都绿，e2e 里也没有用例读这两句 · 不修：只算建议
+- [建议] 验收 2「关思考且 tools 非空本地拒绝」只测了 effort high 一种 · 证据：突变 R15（拒绝条件加 `&& req.effort !== undefined`）相关与全量都绿 · 不修：只算建议
+- [建议] 总参考「以后再说」新加的第一条（Haiku 4.5 公告）写「新开一步」，没写在哪里开：原 plan 写「在这里新开一步」，spec §Haiku 4.5 写「到时在本 spec 的 plan「以后」记一步」，plan 没有这一节，docs/spec-driven-dev.md §6 又说这一节的条目要做先写 spec · 无证据 · 不修：只算建议
