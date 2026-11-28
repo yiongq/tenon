@@ -71,7 +71,7 @@
 - 2026-11-28 · owner 读「给你看的一页」约 5 分钟（owner 自述）；批 ready 前问了 1 个问题（要不要用日志库）。
 - ready 之后的修订条数、走查时「这不是我以为的」次数：做到那一步再记。
 
-## 评审 · 2026-11-28 · 审过 0b3707e
+## 合并前核对（PR #98，只看文档） · 2026-11-28 · 0b3707e
 
 - 范围：PR #98 能不能合进 dev（两份 spec 的文档；设计不重审）。新上下文，Opus，只读。原文在私有笔记（另记）。
 - 结论：改完再合。1 blocker、1 major、8 minor、4 建议。
@@ -92,3 +92,6 @@
 - 测试改动：apps/desktop/test/profile.test.ts · 「logs a dropped entry through console.warn when the caller gives no log, without its address」改名为「…through the app log…」 · `readConfig` 不传 log 时的回落按 spec §记什么改成 `appLog.line('config', 'warn')`，不再走 `console.warn`；用例改成 spy `appLog.line`，仍断言恰一行、含 `customVendors[0]`、不含 `secret-host`，另加一句断言来源与级别是 `config`、`warn`（E2、plan 2.4）。
 - 测试改动：scripts/lint-gate.test.mjs · 「still bans reading main's cwd outside dev-env.ts」 · 评审后的修复（安全 m3、对照 spec m1）要求 `dev-env.ts` 的 override 只放开 cwd、不再把 `process.stderr` 的禁令一起关掉，并把 `process.stdout` 也加进禁令；原先断言 dev-env 的 `no-restricted-properties` 是 `'off'`，与此直接冲突。改成：它是 `error`、只禁 `process.stderr` 与 `process.stdout`（不含 cwd），`no-restricted-imports` 仍是 `'off'`——放开的范围没变，禁的范围更大。
 - 实现者提交：5022747、cd87c5b、1a07167（2026-11-28；另一个新子 agent）。删掉 7 行 `@ts-expect-error`（测试作者数成 6 行，实际 7 行；只删指令行）；lead 随后删掉 `test/support/error-logs.ts` 文件头讲这些指令的过期注释，断言没动。
+- 评审后补测试提交：3720511（2026-11-28；又一个新子 agent，只写测试）。14 条复现（12 条先红）、23 个突变缺口逐个验证能杀。
+- 测试改动：apps/desktop/test/error-logs-app-log.test.ts · error-logs 验收 2、16 · 收紧：把「保留数小于总数」「长度不超过上限」这类宽松断言换成精确值（留下的是第 0–999 条、丢弃计数 49000、换窗口时的 `log.dropped` 在 close 之前就在），一条精确断言顶替了几条宽松的，所以删的条数比加的多。
+- 修复者提交：2cab2ec、698f3f0、2f863e0、b9bbff0（2026-11-28；另一个新子 agent）。
