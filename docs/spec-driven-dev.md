@@ -396,7 +396,7 @@ standard、heavy 的 spec 按这个顺序排；lite 的 spec 没有第 1 节，�
 9. **文档登记与证据**：
    - 现行文档：`docs/ux/` · 设计令牌、组件、交互约定和对照审计；`docs/evals/README.md` · 评测协议，规则以 02 为准；以后每次改，在文末「## 修订」记一行。
    - 受限资料：`../tenon-uxkit/` · 只可读 `interactions.md` 的行为，不许抄文件、类名、令牌值、字体名；逆向分析得来的材料放在仓库外的私有目录，只作本机参考，不许抄进仓库；由公开的 `scripts/source-gate.mjs`（`pnpm test`）和私有笔记里的扫描脚本守。
-   - 参考笔记：`docs/reference/` · claude-desktop-feature-map、deepchat-mechanisms、goose-mechanisms、sandbox-runtime-mechanisms 等机制笔记。overview 在 adopt 之后、起草 05 之前另开 PR；厂商现状表随 claude-5-5-models 第 1 步先核实 Anthropic，再随核实补其他厂商，本次不创建。
+   - 参考笔记：`docs/reference/` · claude-desktop-feature-map、deepchat-mechanisms、goose-mechanisms、sandbox-runtime-mechanisms 等机制笔记。overview 已建：`docs/architecture/overview.md`。厂商现状表：`docs/reference/vendors.md`，claude-5-5-models 第 1 步建，先核实 Anthropic，其他厂商随核实补。
    - 拍板登记处：`docs/adr/` · 项目级决定，格式见 adr-001，不另建 `docs/decisions.md`。05 起 decisions.md 进公开 spec 目录；调研原文、探针原始输出、评审原文留在私有笔记，公开文件只留结论或「另记」。
    - 人工验收截图：只有 Tenon 自己界面、用假数据拍的图可进 `<spec 文件夹>/walkthrough/`；带真实 key、真实厂商账号，以及别家产品的截图一律只进 tenon-notes，log.md 写「另记」。
 10. **公开与私有的边界**：仓库是公开的。影响贡献者和用户的决定（许可证、边界、接口、取舍）进公开的 spec / ADR；市场判断、定价、目标客户、营收、谈判相关的内容不进仓库，放仓库外的私有笔记，ADR 里只留一句「另记」。
