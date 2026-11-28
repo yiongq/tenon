@@ -405,14 +405,18 @@ describe('what is owed after a turn-over that did not work', () => {
     // The next open of main.jsonl, which is the one after the rename, fails.
     openFailure.left = 1
     while (!existsSync(join(dir, 'main.1.jsonl'))) filler()
-    // The rename worked and the line that made the file turn over is given up with the new file.
+    // The rename worked and the line that made the file turn over is given up: the new file is not there.
     expect(existsSync(main)).toBe(false)
-    // Five more inside the minute: not written either, because it is a failed turn-over and the next
-    // try is a minute away.
+    // Five more inside the minute: not written either, because it counts as a failed turn-over and
+    // the next try is a minute away.
     for (let i = 0; i < 5; i += 1) filler()
     expect(existsSync(main)).toBe(false)
+    // At 59 seconds it is not tried yet; at 60 it is.
+    clock.advance(59_000)
+    filler()
+    expect(existsSync(main)).toBe(false)
 
-    clock.advance(60_000)
+    clock.advance(1_000)
     log.line('after', 'info')('the file is there again')
     log.close()
 
@@ -423,11 +427,11 @@ describe('what is owed after a turn-over that did not work', () => {
         .map((r) => [r['event'], r['carried']])
         .toSorted(),
     ).toEqual(LIFECYCLE.map((event) => [event, true]))
-    expect(records[4]).toMatchObject({ event: 'log.dropped', source: 'rotate', count: 6 })
+    expect(records[4]).toMatchObject({ event: 'log.dropped', source: 'rotate', count: 7 })
     expect(records[5]).toMatchObject({ event: 'line', source: 'after' })
     // Every filler is in the old file or counted.
     const kept = recordsOf(join(dir, 'main.1.jsonl')).filter((r) => r['event'] === 'line')
-    expect(kept.length + 6).toBe(written)
+    expect(kept.length + 7).toBe(written)
     expect(stderr).toHaveLength(1)
     expect(stderr[0]).toContain('EMFILE')
   })

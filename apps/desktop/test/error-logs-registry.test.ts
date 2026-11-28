@@ -199,6 +199,28 @@ it(
   },
 )
 
+it(
+  'error-logs 验收 3: a value that shares most of its start with the one let go is still found whole afterwards, in each spelling, and its start is still taken out of a cut field',
+  { timeout: 120_000 },
+  () => {
+    const { log } = openLog({ packaged: true })
+    const first = 'twin-prefix-first-0001'
+    const twin = 'twin-prefix-second-0002'
+    log.remember(first)
+    log.remember(twin)
+    // 9 999 more make 10 001: the first is let go, and the twin, which shares its start, stays.
+    for (let i = 1; i <= 9_999; i += 1) log.remember(lone(i))
+    expect(log.redact(`a ${first} b`)).toBe(`a ${first} b`)
+    for (const form of [twin, base64(twin), JSON.stringify(twin).slice(1, -1)]) {
+      expect([form, log.redact(`a ${form} b`)]).toEqual([form, 'a [redacted] b'])
+    }
+    expect(log.redact(`gateway said: ${twin.slice(0, 16)}…`)).toBe('gateway said: [redacted]…')
+    expect(log.redact(`gateway said: ${first.slice(0, 16)}…`)).toBe(
+      `gateway said: ${first.slice(0, 16)}…`,
+    )
+  },
+)
+
 it('error-logs 验收 3: a field that is exactly one registered 8-character value is taken out whole', () => {
   const { log, dir } = openLog({ packaged: true })
   log.remember('Qk7#mP9z')
