@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：ready，段一在做（实现分支 `feat/error-logs-seg1`，spec 在 PR #98）。第 2.1–2.5 步做完：测试作者提交 3e36885，实现三次提交（5022747、cd87c5b、1a07167），格式、lint、类型检查绿，error-logs 的 26 条用例绿；e2e（验收 14、17）与第 2.0 步的探针还没在 CI 跑过。下一步第 2.6 步：推 CI 草稿 PR，三个视角的独立评审。spec-check 现在拦在「段一还没有评审记录」，2.6 记完就过。
-需要你：① 合并 spec 的 PR #98（评审过、CI 绿后）；② 给 `feat/error-logs-seg1` 开草稿 PR，让 CI 跑 e2e 和探针。
+当前：ready，段一在第 2.6 步（`feat/error-logs-seg1`，PR #101；spec 的 PR #98 等 owner 合）。两轮评审的发现都已处置：第一轮三视角（审 53b8165）3 major，修在 2cab2ec–b9bbff0；第二轮复审（审 f5a1784）1 blocker（四项新增机制没点名，owner 已定 D21–D24）、1 major（登记表查找退化），修在 926abb8–a1e3a9a。第 2.0 步的探针有结果：照现稿，开放问题 1 关掉。正在等第三轮复审（按细则 8 是最后一轮）。
+需要你：① 合并 spec 的 PR #98（CI 全绿）；② 第三轮复审通过后，段一走查（2.7）。
 
 ## 分段
 
@@ -22,7 +22,7 @@
   - [x] 1.4 探针 P1–P3：四轮 CI 跑完（2026-11-28），结论写进 evidence.md，照分支改了 spec；原始输出在私有笔记。
   - [x] 1.5 再跑 spec-check；请 owner 读一页、批 ready。
 - [ ] 2. 段一 · 报错写进日志（守验收 1–7、13、14、16、17、18）
-  - [ ] 2.0 实现之前先验 spec 开放问题 1：开发构建里各跑一次有、没有 `unhandledRejection` 监听，记下 stderr 与退出码；按开放问题里写好的分支改 spec（属收紧时直接改并记修订，要改行为就先问 owner）。
+  - [x] 2.0 实现之前先验 spec 开放问题 1：开发构建里各跑一次有、没有 `unhandledRejection` 监听，记下 stderr 与退出码；按开放问题里写好的分支改 spec（属收紧时直接改并记修订，要改行为就先问 owner）。
   - [x] 2.1 测试的前置：e2e 里读日志的 helper（照 `apps/desktop/e2e/helpers/launch.ts` 里 `configPathIn` 的样子写 `logsDirIn(userData)`）；编码变体由独立脚本先算好，抄进测试当字面量。
   - [x] 2.2 测试作者（新子 agent，只读 spec、evidence 与本 plan，不看实现）按本段的验收写测试：哨兵经真实路径进来（用 `MemorySecrets`、`TENON_SECRETS=memory`，不碰钥匙串），一张 `satisfies Record<LogEvent['event'], …>` 的哨兵表，跨截断点的哨兵，OAuth 分片的哨兵，静态扫描（只有 `log/` 与 `mcp/log-sink.ts` 写 `logs/`；只有 `host/index.ts` new 钥匙串）。验收 3 那张表要有「事先就在内存钥匙串里、只经 `get` 读出」的哨兵、跨 300、500、2000 字截断点的哨兵、互为前缀的两个哨兵，三种写法要注入进去而不只是检查它们找不到。跑一遍确认是红的，单独提交一次只改测试的提交，在 log.md 记一行「测试作者提交：<提交号>」。
   - [x] 2.3 实现者（另一个子 agent）：`log/redact.ts`、`log/app-log.ts`（格式、限量与来源表、轮转与抄写、文件保护、半行修补、内存缓存、运行标记）、`log/watch.ts` 的请求失败与界面报错；`host/sandbox.ts` 的「对不上命令的违规」接到 `sandbox-unattributed`。不削弱 2.2 的测试；非改不可时在 log.md 写「测试改动：文件 · 用例 · 为什么」。
@@ -48,11 +48,12 @@
 
 ## 交接
 
-2026-11-28：段一第 2.1–2.5 步做完，在 `feat/error-logs-seg1`（1a07167 之后）。测试作者与实现者是两个互不相干的子 agent；实现者只动了三处测试文件：删 7 行 `@ts-expect-error`、`profile.test.ts` 一条按 spec 改（log.md 有「测试改动」）。实现者自己定了 11 处 spec 没写的细节、列了约 12 处没被测试盯住的行为，都交 2.6 的评审看（原文另记）。本机全量测试有 6 条旧用例红，是沙箱里起不了子进程，与本次无关。下一步：2.6（CI 草稿 PR、三视角评审、处置），再 2.7 带 owner 走查。
+2026-11-28：段一代码、两轮评审与两轮修复都在 `feat/error-logs-seg1`。每轮修复都是先交只含测试的提交（3720511、926abb8、040982f），再交修复。owner 当天补定四项（D21–D24）。lint 配置 `.oxlintrc.json` 与 `scripts/lint-gate.test.mjs` 被收紧（log.md 有「测试改动」）。没做的：OAuth 令牌先登记后存（要动 kernel `mcp/oauth.ts`，不在本 spec 批准的 kernel 改动里，第 4 步登记「以后再说」）；`kernel` 来源的行级别混着提示与错误（一个转发器分不开）。下一步：第三轮复审的结论写进 log.md 的评审记录（带结论与突变两行），再 2.7 带 owner 走查；段二开工前删掉临时探针 `apps/desktop/e2e/probe-unhandled-rejection.spec.ts` 与它的 preload。
 
 ## Open
 
-- 加了 `unhandledRejection` 监听后，stderr 那一行与退出码会不会变（spec 开放问题 1）：第 2.0 步实现前先验。
+- （已定）加了 `unhandledRejection` 监听后退出码不变、只少那两行警告，照现稿（log.md 探针一行）。
+- OAuth 令牌在存进钥匙串之后才登记（kernel `mcp/oauth.ts`）：要 owner 点名多动 kernel 一处才能改；第 4 步登记进「以后再说」。
 
 ## 验收矩阵
 

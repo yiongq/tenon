@@ -173,7 +173,7 @@ export interface McpPoolOptions { /* 已有成员不动 */ readonly onSecret?: (
 
 ## 一直要成立的规矩
 
-- 主进程里只有 `log/` 写控制台或 stderr，别处不调 `console`、不写 `process.stderr`（由 lint 守）。
+- 主进程里只有 `log/` 写控制台或 stderr，别处不调 `console`、不写 `process.stderr` 与 `process.stdout`（由 lint 与静态扫描测试一起守，两边各有没列到的写法）。
 - 主进程里只有 `log/` 与 `mcp/log-sink.ts` 写 `logs/` 下的文件（由测试守：静态扫描 `apps/desktop/src/main`）。
 - 写入口只收 `LogEvent`（由类型检查守对象形状）；`line` 的字符串里不放 `JSON.stringify` 或 `util.inspect` 出来的对象（没自动化，靠评审）。
 - 每个字符串字段先脱敏、再截断，做完再序列化成一行，不在序列化后的整行上替换；同一位置有几个登记值能对上时取最长的；应用目录先于主目录替换（由测试守）。
@@ -303,3 +303,4 @@ export interface McpPoolOptions { /* 已有成员不动 */ readonly onSecret?: (
 - 2026-11-28 · §日志怎么写、§已知限制与代价 · owner 点名定的四项新增规则（段一复审指出前两行修订里有四项是新增机制、不是澄清，补问 owner；decisions.md D21–D24）：登记表上限 1 万、丢最久没用的（原先写的「丢最早登记的」改掉）；轮转失败丢行计数、一分钟后重试；结尾残段换掉；抄写每种只抄最近一条 · PR #101
 - 2026-11-28 · §脱敏 第 3 层 · 澄清：通用格式各带最短长度（如 `sk-` 后至少 20 个字符），太短的不当令牌换 · PR #101
 - 2026-11-28 · 开放问题 1 · 已定：探针（PR #101 的 CI，run 46126942154）实测加监听前后退出码都是 0，只是 `UnhandledPromiseRejectionWarning` 那两行没了，照现稿，验收 9 不改 · PR #101
+- 2026-11-28 · §一直要成立的规矩 第 1 条 · 澄清：守这一条的是 lint 加静态扫描测试，禁的范围加上 `process.stdout` · PR #101
