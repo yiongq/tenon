@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：ready（owner 2026-11-28「error-logs 改 ready」）。12 张卡都已定；三轮评审的发现都已处置；探针 P1–P3 全部跑完，结果在 evidence；代码没动；文件已提交在分支 `claude/spec-skill-clarity-c6549f`（daae933 起），还没推送、没开 PR。下一步：owner 推送并开 PR；段一等 owner 说先做 06 还是先做这份再开工。
-需要你：① 在终端推送这个分支并开 PR（PR 只有文档，动了 03、04 的页头，不涉及门禁文件）；② 说一声先做 06 还是先做这份；③ 有空时关掉探针的草稿 PR #93 并删掉远端分支 probe/packaging。
+当前：ready，段一开工（owner 2026-11-28「「错误日志」可以直接开工」；06 当天已 implemented）。spec 在分支 `claude/spec-skill-clarity-c6549f`（已合入最新 dev，0b3707e，等 owner 推送、开 PR）；实现在分支 `feat/error-logs-seg1`，从它开出。正在做第 2.1、2.2 步（测试作者）。第 2.0 步要起 Electron，不在 owner 的 Mac 上跑：写成一条临时 e2e，随段一第一次 CI 草稿 PR 跑，结果只影响段二的验收 9，不挡段一。
+需要你：推送 `claude/spec-skill-clarity-c6549f`（多了合并 dev 的提交）并给它开 PR。
 
 ## 分段
 
@@ -14,13 +14,13 @@
 
 ## 步骤
 
-- [ ] 1. 改 ready 之前
+- [x] 1. 改 ready 之前
   - [x] 1.1 lead 把四个文件与 log.md 放进仓库的那个 PR 里（03 页头的 `Changed by` 起草时已补上 error-logs 的两节）；提交之后在 log.md 那条挑刺评审记录下补一行被审内容所在的提交号；跑 `python3 .sdd/spec-check.py` 与 `python3 .sdd/spec-check.py --index`。这一份不进总参考阶段表（决策卡「agent 自定」）。
   - [x] 1.2 复审：新上下文核对两份评审每条发现的处置（2026-11-28，结论在 log.md）；按复审改完。
   - [x] 1.2.1 第三轮复查（第二次复审，2026-11-28）：结论与处置记在 log.md；按细则 8 不再起第四轮。
   - [x] 1.3 owner 定 D19（A）与 D20（A），2026-11-28。
   - [x] 1.4 探针 P1–P3：四轮 CI 跑完（2026-11-28），结论写进 evidence.md，照分支改了 spec；原始输出在私有笔记。
-  - [ ] 1.5 再跑 spec-check；请 owner 读一页、批 ready。
+  - [x] 1.5 再跑 spec-check；请 owner 读一页、批 ready。
 - [ ] 2. 段一 · 报错写进日志（守验收 1–7、13、14、16、17、18）
   - [ ] 2.0 实现之前先验 spec 开放问题 1：开发构建里各跑一次有、没有 `unhandledRejection` 监听，记下 stderr 与退出码；按开放问题里写好的分支改 spec（属收紧时直接改并记修订，要改行为就先问 owner）。
   - [ ] 2.1 测试的前置：e2e 里读日志的 helper（照 `apps/desktop/e2e/helpers/launch.ts` 里 `configPathIn` 的样子写 `logsDirIn(userData)`）；编码变体由独立脚本先算好，抄进测试当字面量。
