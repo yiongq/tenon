@@ -521,6 +521,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       counted += limitTokensOf(attempt.usage, encoderOf(encoded)?.wire ?? null)
       lastStop = attempt.stop?.reason ?? null
       errorCode = attempt.error?.code ?? null
+      if (attempt.error !== null) ctx.log(attemptFailedLine(runId, attempt, attempt.error))
       // oxlint-disable-next-line no-await-in-loop -- audit every summary attempt before any retry or anchor
       await write([
         attemptFact(ctx, {
