@@ -1,13 +1,6 @@
 /**
  * What the error-logs tests share (docs/features/error-logs/spec.md): the log module's API, temp
  * folders, a hand-driven clock, an opened log, and readers of what a log left on disk.
- *
- * The `@ts-expect-error` lines below exist only because `apps/desktop/src/main/log/` was not
- * written when these tests were (test author and implementer are different agents): each turns the
- * missing-module error into an expected one so the repo's typecheck stays green meanwhile, and the
- * names re-exported from a missing module are `any`. When a module lands, tsc reports its directive
- * as unused: delete that directive and nothing else. Every call below is annotated by hand, so the
- * real types apply unchanged.
  */
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'

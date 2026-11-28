@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：ready，段一在做（实现分支 `feat/error-logs-seg1`，spec 在 PR #98）。第 2.1、2.2 步做完（测试作者提交 3e36885，12 条验收都有用例且是红的；两条静态扫描现在就绿，理由在 log）。下一步第 2.3–2.5 步（实现者）。第 2.0 步的探针已写成临时 e2e（`apps/desktop/e2e/probe-unhandled-rejection.spec.ts`），等段一第一次推 CI 草稿 PR 时出结果，只影响段二的验收 9。
-需要你：spec 的 PR #98 评审过、CI 绿后由你合并（或开自动合并）。
+当前：ready，段一在做（实现分支 `feat/error-logs-seg1`，spec 在 PR #98）。第 2.1–2.5 步做完：测试作者提交 3e36885，实现三次提交（5022747、cd87c5b、1a07167），格式、lint、类型检查绿，error-logs 的 26 条用例绿；e2e（验收 14、17）与第 2.0 步的探针还没在 CI 跑过。下一步第 2.6 步：推 CI 草稿 PR，三个视角的独立评审。spec-check 现在拦在「段一还没有评审记录」，2.6 记完就过。
+需要你：① 合并 spec 的 PR #98（评审过、CI 绿后）；② 给 `feat/error-logs-seg1` 开草稿 PR，让 CI 跑 e2e 和探针。
 
 ## 分段
 
@@ -25,9 +25,9 @@
   - [ ] 2.0 实现之前先验 spec 开放问题 1：开发构建里各跑一次有、没有 `unhandledRejection` 监听，记下 stderr 与退出码；按开放问题里写好的分支改 spec（属收紧时直接改并记修订，要改行为就先问 owner）。
   - [x] 2.1 测试的前置：e2e 里读日志的 helper（照 `apps/desktop/e2e/helpers/launch.ts` 里 `configPathIn` 的样子写 `logsDirIn(userData)`）；编码变体由独立脚本先算好，抄进测试当字面量。
   - [x] 2.2 测试作者（新子 agent，只读 spec、evidence 与本 plan，不看实现）按本段的验收写测试：哨兵经真实路径进来（用 `MemorySecrets`、`TENON_SECRETS=memory`，不碰钥匙串），一张 `satisfies Record<LogEvent['event'], …>` 的哨兵表，跨截断点的哨兵，OAuth 分片的哨兵，静态扫描（只有 `log/` 与 `mcp/log-sink.ts` 写 `logs/`；只有 `host/index.ts` new 钥匙串）。验收 3 那张表要有「事先就在内存钥匙串里、只经 `get` 读出」的哨兵、跨 300、500、2000 字截断点的哨兵、互为前缀的两个哨兵，三种写法要注入进去而不只是检查它们找不到。跑一遍确认是红的，单独提交一次只改测试的提交，在 log.md 记一行「测试作者提交：<提交号>」。
-  - [ ] 2.3 实现者（另一个子 agent）：`log/redact.ts`、`log/app-log.ts`（格式、限量与来源表、轮转与抄写、文件保护、半行修补、内存缓存、运行标记）、`log/watch.ts` 的请求失败与界面报错；`host/sandbox.ts` 的「对不上命令的违规」接到 `sandbox-unattributed`。不削弱 2.2 的测试；非改不可时在 log.md 写「测试改动：文件 · 用例 · 为什么」。
-  - [ ] 2.4 接线：`index.ts` 的转发器、各模块 `log ?? console.warn` 的回落、`readConfig` 的缺省 log 改成写日志，级别照 `LogLevel` 的含义；`main()` 一开始 `open`，之后注册 `will-quit`；`host/index.ts` 的 `HostSecrets` 包上 `rememberingSecrets`；`provider.ts` 的环境变量回落处登记；`.oxlintrc.json` 给 `apps/desktop/src/main/**` 禁 `console` 与 `process.stderr`，只放过 `log/`。`apps/desktop/test/profile.test.ts` 那条走 `console.warn` 的用例按需改，改了在 log.md 写「测试改动」一行（E2）。
-  - [ ] 2.5 kernel：`loop/run.ts` 在尝试失败处加一行 `ctx.log`；`mcp/pool.ts` 加 `onSecret`（§对 03 的增补，D19）；desktop 的 `mcp/log-sink.ts` 以 0600 新建，启动时以不跟随链接的方式收紧已有文件。
+  - [x] 2.3 实现者（另一个子 agent）：`log/redact.ts`、`log/app-log.ts`（格式、限量与来源表、轮转与抄写、文件保护、半行修补、内存缓存、运行标记）、`log/watch.ts` 的请求失败与界面报错；`host/sandbox.ts` 的「对不上命令的违规」接到 `sandbox-unattributed`。不削弱 2.2 的测试；非改不可时在 log.md 写「测试改动：文件 · 用例 · 为什么」。
+  - [x] 2.4 接线：`index.ts` 的转发器、各模块 `log ?? console.warn` 的回落、`readConfig` 的缺省 log 改成写日志，级别照 `LogLevel` 的含义；`main()` 一开始 `open`，之后注册 `will-quit`；`host/index.ts` 的 `HostSecrets` 包上 `rememberingSecrets`；`provider.ts` 的环境变量回落处登记；`.oxlintrc.json` 给 `apps/desktop/src/main/**` 禁 `console` 与 `process.stderr`，只放过 `log/`。`apps/desktop/test/profile.test.ts` 那条走 `console.warn` 的用例按需改，改了在 log.md 写「测试改动」一行（E2）。
+  - [x] 2.5 kernel：`loop/run.ts` 在尝试失败处加一行 `ctx.log`；`mcp/pool.ts` 加 `onSecret`（§对 03 的增补，D19）；desktop 的 `mcp/log-sink.ts` 以 0600 新建，启动时以不跟随链接的方式收紧已有文件。
   - [ ] 2.6 段一收尾：`pnpm format:check && pnpm lint && pnpm typecheck`、`pnpm vitest run --maxWorkers=2`、`python3 .sdd/spec-check.py`；新上下文的独立评审分「对照 spec」「安全」「突变」三个视角，StrykerJS 只对改动过的文件跑、只出报告（本项目补充第 5 条）；带证据的问题按细则分类处置，记进 log.md。
   - [ ] 2.7 带 owner 按场景逐条走查段一（开发版，owner 要求时在他的 Mac 上起）：存错 key 再发消息、正常开关一次看生命周期行；每条明确回答对或不对，记进 log.md。
 - [ ] 3. 段二 · 崩溃、启动失败与菜单入口（守验收 8–12、15、19）
@@ -48,7 +48,7 @@
 
 ## 交接
 
-2026-11-28：owner 回「error-logs 改 ready」，Status 已改、Approved 行已加；两份 spec 连同 03、04 页头随 daae933 提交，第 1.1 步做完（log.md 补了提交号，入口页重新生成）。没写代码，没推送。下一步：owner 推送并开 PR；owner 定先做 06 还是这份，定了这份就从第 2.0 步开始（先验 Open 里那一条）。
+2026-11-28：段一第 2.1–2.5 步做完，在 `feat/error-logs-seg1`（1a07167 之后）。测试作者与实现者是两个互不相干的子 agent；实现者只动了三处测试文件：删 7 行 `@ts-expect-error`、`profile.test.ts` 一条按 spec 改（log.md 有「测试改动」）。实现者自己定了 11 处 spec 没写的细节、列了约 12 处没被测试盯住的行为，都交 2.6 的评审看（原文另记）。本机全量测试有 6 条旧用例红，是沙箱里起不了子进程，与本次无关。下一步：2.6（CI 草稿 PR、三视角评审、处置），再 2.7 带 owner 走查。
 
 ## Open
 

@@ -90,3 +90,4 @@
 - 测试作者指出 spec 说不清的十处：七处已澄清进 spec（修订记录 2026-11-28）；其余三处照测试的理解不改 spec：MCP 日志收紧的入口时机、多行密钥按整段登记、`ErrorSummary` 的 cause 只保证 message 不进。
 - 留给实现者：`test/support/error-logs.ts` 的 5 行与 `pool-on-secret.test.ts` 的 1 行 `@ts-expect-error` 在模块出现后删掉（只删这 6 行不算削弱）。
 - 测试改动：apps/desktop/test/profile.test.ts · 「logs a dropped entry through console.warn when the caller gives no log, without its address」改名为「…through the app log…」 · `readConfig` 不传 log 时的回落按 spec §记什么改成 `appLog.line('config', 'warn')`，不再走 `console.warn`；用例改成 spy `appLog.line`，仍断言恰一行、含 `customVendors[0]`、不含 `secret-host`，另加一句断言来源与级别是 `config`、`warn`（E2、plan 2.4）。
+- 实现者提交：5022747、cd87c5b、1a07167（2026-11-28；另一个新子 agent）。删掉 7 行 `@ts-expect-error`（测试作者数成 6 行，实际 7 行；只删指令行）；lead 随后删掉 `test/support/error-logs.ts` 文件头讲这些指令的过期注释，断言没动。
