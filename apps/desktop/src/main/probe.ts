@@ -29,6 +29,22 @@ import { helperPaths } from './host/sandbox-config.js'
 type ProbeHost = Awaited<ReturnType<typeof createDesktopHost>>
 
 /**
+ * error-logs P1: a real crash from inside the app, once the window has loaded
+ * (TENON_PROBE_CRASH=renderer or main). A kill -SEGV from outside may not reach Crashpad on macOS,
+ * which listens for Mach exceptions; a real fault does.
+ */
+export function probeSelfCrash(win: BrowserWindow): void {
+  const mode = process.env['TENON_PROBE_CRASH']
+  if (mode !== 'renderer' && mode !== 'main') return
+  win.webContents.once('did-finish-load', () => {
+    setTimeout(() => {
+      if (mode === 'renderer') win.webContents.forcefullyCrashRenderer()
+      else process.crash()
+    }, 5_000)
+  })
+}
+
+/**
  * error-logs P1's positive control: the same crash with collection switched on. Off unless
  * TENON_PROBE_CRASHREPORTER=1; nothing in the app starts the crash reporter otherwise.
  */

@@ -109,11 +109,12 @@ build_variant() { # name electron-builder-args...
 cd_info() { # label app: the identity codesign reports
   echo "== $1 ($2)"
   codesign -dvvv "$2" 2>&1 | grep -E '^(Identifier|CodeDirectory|CDHash|Signature|Info.plist|Sealed|TeamIdentifier)'
-  codesign -d -r- "$2" 2>&1 | grep -E '^designated'
+  # An ad-hoc signature's line reads "# designated => cdhash H..." (with the "# "); never end on grep's status.
+  codesign -d -r- "$2" 2>&1 | grep -E 'designated =>' || true
 }
 
 cdhash_of() { codesign -dvvv "$1" 2>&1 | sed -n 's/^CDHash=//p'; }
-dr_of() { codesign -d -r- "$1" 2>&1 | sed -n 's/^designated => //p'; }
+dr_of() { codesign -d -r- "$1" 2>&1 | sed -n 's/^#* *designated => //p'; }
 
 phase_dev() {
   cd "$DESK" || exit 1
@@ -142,6 +143,17 @@ phase_crash_dev() { # error-logs P1: a development build, data dir in a temp dir
   rm -rf "$data"
   res "== error-logs P1 control: the same, with crashReporter.start (data dir $data)"
   crash_run dev-control 'Electron\.app/Contents/MacOS/Electron( |$)' "$data" \
+    env TENON_PROBE_CRASHREPORTER=1 pnpm exec electron . "--user-data-dir=$data"
+  # The same with real faults from inside the app (no external signal), without and with collection.
+  data="$WORK/ud-dev-self"
+  rm -rf "$data"
+  res "== error-logs P1, real crashes from inside, no crashReporter.start (data dir $data)"
+  crash_self dev-self 'Electron\.app/Contents/MacOS/Electron( |$)' "$data" \
+    pnpm exec electron . "--user-data-dir=$data"
+  data="$WORK/ud-dev-self-control"
+  rm -rf "$data"
+  res "== error-logs P1 control, real crashes from inside, with crashReporter.start (data dir $data)"
+  crash_self dev-self-control 'Electron\.app/Contents/MacOS/Electron( |$)' "$data" \
     env TENON_PROBE_CRASHREPORTER=1 pnpm exec electron . "--user-data-dir=$data"
 }
 

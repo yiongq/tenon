@@ -66,14 +66,14 @@ crash_snapshot() { # title marker data-dir-or-empty
   found="$(find "$HOME" /var/crash /var/lib/systemd/coredump /Library/Logs/DiagnosticReports \
     -newer "$2" \( -iname '*.dmp' -o -ipath '*crashpad*' -o -iname '*.ips' -o -iname '*.crash' \
     -o -iname 'crash*' -o -iname 'core.*' \) \
-    -not -path '*/node_modules/*' -not -path "$ROOT/*" 2>/dev/null | head -50)"
+    -not -path '*/node_modules/*' -not -path '*/bazel/*' -not -path "$ROOT/*" 2>/dev/null | head -30)"
   res "crash-looking files created since launch (home, /var/crash, coredump, DiagnosticReports): ${found:-none}"
   if [ -d "$HOME/Library/Logs/DiagnosticReports" ]; then
     res "~/Library/Logs/DiagnosticReports: $(ls -1 "$HOME/Library/Logs/DiagnosticReports" | head -10 | tr '\n' ' ')"
   fi
   res "new entries under the app data roots since launch:"
   find "$HOME/Library/Application Support" "$HOME/.config" -maxdepth 5 -newer "$2" 2>/dev/null |
-    head -60 | res
+    grep -vE 'com\.apple|Knowledge|AddressBook|CallHistory|Animoji|CrashReporter/Intervals' | head -25 | res
   echo "::endgroup::"
 }
 
@@ -111,6 +111,26 @@ crash_run() { # label main-regex data-dir-or-empty launch-command...
   tail -n 30 "$OUT/crash-$label.log" | cut -c1-300
   pkill -f "$regex" 2>/dev/null || true
   sleep 2
+}
+
+# Real crashes from inside the app (probe.ts reads TENON_PROBE_CRASH): the renderer is crashed with
+# forcefullyCrashRenderer, then, in a second launch, the main process with process.crash().
+crash_self() { # label main-regex data-dir launch-command...
+  local label=$1 regex=$2 data=$3 mode main
+  shift 3
+  for mode in renderer main; do
+    local marker="$WORK/marker-$label-$mode"
+    touch "$marker"
+    sleep 1
+    env "TENON_PROBE_CRASH=$mode" "$@" >"$OUT/crash-$label-$mode.log" 2>&1 &
+    sleep 40
+    main="$(python3 "$PROBE/proc.py" main "$regex")"
+    res "[$label] self-crash $mode: main process still running after 40 s: ${main:-no}"
+    crash_snapshot "$label self-crash $mode" "$marker" "$data"
+    tail -n 6 "$OUT/crash-$label-$mode.log" | cut -c1-240
+    pkill -f "$regex" 2>/dev/null || true
+    sleep 3
+  done
 }
 
 # error-logs P2: six scenarios of Electron's main process meeting an unhandled rejection or an

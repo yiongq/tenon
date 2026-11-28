@@ -41,7 +41,7 @@ import { createLocaleController } from './locale.js'
 import { buildApplicationMenu } from './menu.js'
 import { hardenWebContents, isSameDocument } from './navigation.js'
 import { preferredSystemLanguages } from './preferred-languages.js'
-import { probeCrashControl, runProbe } from './probe.js'
+import { probeCrashControl, probeSelfCrash, runProbe } from './probe.js'
 import { registerProviderRoutes } from './provider-routes.js'
 import { createRunConnector } from './run-assembly.js'
 import { registerSessionRoutes } from './session.js'
@@ -458,6 +458,7 @@ async function main(): Promise<void> {
   const win = startSandboxAfterWindow(openWindow, host.sandbox)
   // PROBE: the packaging probe's self-check (docs/features/packaging-and-logs), then exit.
   if (process.env['TENON_PROBE'] === '1') void runProbe({ app, host, win })
+  probeSelfCrash(win)
   // start() returns the same run: signal handling observes startup without awaiting it here.
   registerSandboxSignals({ process, app, sandbox: host.sandbox, run: host.sandbox.start() })
   void host.sandbox.start().outcome.then(() => sandboxRoutes.changed())

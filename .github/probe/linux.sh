@@ -80,6 +80,17 @@ phase_crash_dev() { # error-logs P1: a development build, data dir in a temp dir
   res "== error-logs P1 control: the same, with crashReporter.start (data dir $data)"
   crash_run dev-control 'electron/dist/electron( |$)' "$data" \
     env TENON_PROBE_CRASHREPORTER=1 xvfb-run -a pnpm exec electron . --no-sandbox "--user-data-dir=$data"
+  # The same with real faults from inside the app (no external signal), without and with collection.
+  data="$WORK/ud-dev-self"
+  rm -rf "$data"
+  res "== error-logs P1, real crashes from inside, no crashReporter.start (data dir $data)"
+  crash_self dev-self 'electron/dist/electron( |$)' "$data" \
+    xvfb-run -a pnpm exec electron . --no-sandbox "--user-data-dir=$data"
+  data="$WORK/ud-dev-self-control"
+  rm -rf "$data"
+  res "== error-logs P1 control, real crashes from inside, with crashReporter.start (data dir $data)"
+  crash_self dev-self-control 'electron/dist/electron( |$)' "$data" \
+    env TENON_PROBE_CRASHREPORTER=1 xvfb-run -a pnpm exec electron . --no-sandbox "--user-data-dir=$data"
 }
 
 phase_build() {
