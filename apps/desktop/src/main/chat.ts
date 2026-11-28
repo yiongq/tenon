@@ -351,6 +351,7 @@ export function createDesktopLoop(options: DesktopLoopOptions): DesktopLoop {
         : {
             sandbox: {
               canReach: (q) => options.sandbox!.canReach?.(q) ?? true,
+              autoCommands: () => options.sandbox!.autoCommands?.() ?? 'no',
               beforeWrap: (q) => options.sandbox!.beforeWrap(q),
               grantsChanged: (q) => options.sandbox!.grantsChanged(q),
             },

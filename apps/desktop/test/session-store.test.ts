@@ -17,6 +17,9 @@ import {
   chatSend,
   chatSendNow,
   chatStop,
+  configGet,
+  configSchema,
+  configSet,
   confirmRequestEvent,
   isEventChannel,
   isRouteChannel,
@@ -26,6 +29,7 @@ import {
   providerList,
   sessionModelChoice,
   sessionMessages,
+  sessionSetApprovalMode,
 } from '@tenon-app/contracts'
 import type {
   EventDef,
@@ -44,6 +48,8 @@ import type { TenonBridge } from '../src/preload/index.js'
 import { listenForQueue } from '../src/renderer/src/runtime/queue-state.js'
 import { listenForRunState } from '../src/renderer/src/runtime/run-state.js'
 import { MODEL_BLOCK_KEY, switchTarget } from '../src/renderer/src/lib/send-block.js'
+import { CONSECUTIVE_BLOCK_CAP } from '../src/renderer/src/lib/approval-mode.js'
+import { MACHINE_DENIAL_CAP } from '../../../packages/kernel/src/loop/limits.js'
 import {
   APPROVAL_LIST_LIMIT,
   SessionStore,
@@ -138,6 +144,7 @@ function fakeBridge(): FakeBridge {
     established: true,
     profile: 'chat' as const,
     workspace: null,
+    approvalMode: 'manual' as const,
   }))
   fake.handle(chatSend, () => ({ accepted: true as const }))
   fake.handle(chatSendNow, () => ({ accepted: true as const }))
@@ -1051,7 +1058,12 @@ describe('the session’s facts (§界面范围 ModeSwitch)', () => {
     // The mode can be switched until the first message; from then on it only shows.
     const fake = fakeBridge()
     let established = false
-    fake.handle(sessionFacts, () => ({ established, profile: 'chat' as const, workspace: null }))
+    fake.handle(sessionFacts, () => ({
+      established,
+      profile: 'chat' as const,
+      workspace: null,
+      approvalMode: 'manual' as const,
+    }))
     const store = new SessionStore(SESSION, fake.bridge, [])
     const detach = store.attach()
     await store.open({ resume: false })
@@ -1086,6 +1098,7 @@ describe('the session’s facts (§界面范围 ModeSwitch)', () => {
       established: false,
       profile: 'cowork' as const,
       workspace: null,
+      approvalMode: 'manual' as const,
     }))
     const store = new SessionStore(SESSION, fake.bridge, [])
     const detach = store.attach()
@@ -1120,10 +1133,16 @@ describe('reads that answer out of order', () => {
       established: boolean
       profile: 'chat'
       workspace: null
+      approvalMode: 'manual'
     }>()
     const facts = [
       slowFacts.promise,
-      { established: true, profile: 'chat' as const, workspace: null },
+      {
+        established: true,
+        profile: 'chat' as const,
+        workspace: null,
+        approvalMode: 'manual' as const,
+      },
     ]
     fake.handle(sessionFacts, () => facts.shift() ?? slowFacts.promise)
     const slowList = Promise.withResolvers<Array<{ sessionId: string; waitKind: 'resume' }>>()
@@ -1134,7 +1153,12 @@ describe('reads that answer out of order', () => {
     const firstList = store.refreshResumable()
     await store.refreshFacts()
     await store.refreshResumable()
-    slowFacts.resolve({ established: false, profile: 'chat', workspace: null })
+    slowFacts.resolve({
+      established: false,
+      profile: 'chat',
+      workspace: null,
+      approvalMode: 'manual',
+    })
     slowList.resolve([{ sessionId: SESSION, waitKind: 'resume' }])
     await Promise.all([firstFacts, firstList])
     expect(store.getSnapshot().facts?.established).toBe(true)
@@ -2314,6 +2338,7 @@ it('presentation-r1 验收 11: refreshed choices and profiles share the task too
     established: false,
     profile: 'cowork' as const,
     workspace: null,
+    approvalMode: 'manual' as const,
   }))
   const store = new SessionStore(SESSION, fake.bridge, [])
   await store.refreshFacts()
@@ -2333,6 +2358,7 @@ it('presentation-r1 验收 11: refreshed choices and profiles share the task too
     established: false,
     profile: 'chat' as const,
     workspace: null,
+    approvalMode: 'manual' as const,
   }))
   await store.refreshFacts()
   expect(store.sendBlock()).toBeNull()
@@ -2423,4 +2449,193 @@ it('presentation-r1 验收 11: restoring a held round awaits the latest model re
     latest.resolve()
     stopQueue()
   }
+})
+
+describe('06 approval mode (§界面「说明条」「降档提示」)', () => {
+  /** A task whose mode main answers from `mode`, with a config main keeps. */
+  function modeBridge(seen: boolean) {
+    const fake = fakeBridge()
+    const state = {
+      mode: 'manual' as 'manual' | 'auto',
+      disabled: false,
+      config: configSchema.parse({ autoModeNoticeSeen: seen }),
+    }
+    fake.handle(sessionFacts, () => ({
+      established: true,
+      profile: 'cowork' as const,
+      workspace: { folders: ['/work/a'], origin: 'picked' as const },
+      approvalMode: state.disabled ? ('manual' as const) : state.mode,
+      ...(state.disabled ? { autoModeDisabled: true as const } : {}),
+    }))
+    fake.handle(sessionSetApprovalMode, ({ mode }) => {
+      state.mode = mode
+      return { ok: true as const, mode }
+    })
+    fake.handle(configGet, () => state.config)
+    fake.handle(configSet, (patch) => {
+      state.config = configSchema.parse({ ...state.config, ...patch })
+      return state.config
+    })
+    return { fake, state }
+  }
+
+  it('06 验收 33: the auto notice shows on the first switch to auto and never again once dismissed, after a remount too', async () => {
+    const h = modeBridge(false)
+    const store = new SessionStore(SESSION, h.fake.bridge, [])
+    await store.refreshFacts()
+    expect(await store.setApprovalMode('auto')).toBe(true)
+    expect(store.getSnapshot().autoNotice).toBe(true)
+    // Back to manual before 「知道了」: it goes, and comes back on the next switch.
+    await store.setApprovalMode('manual')
+    expect(store.getSnapshot().autoNotice).toBe(false)
+    await store.setApprovalMode('auto')
+    expect(store.getSnapshot().autoNotice).toBe(true)
+    await store.dismissAutoNotice()
+    expect(store.getSnapshot().autoNotice).toBe(false)
+    expect(h.fake.calls(configSet)).toEqual([{ autoModeNoticeSeen: true }])
+    await store.setApprovalMode('manual')
+    await store.setApprovalMode('auto')
+    expect(store.getSnapshot().autoNotice).toBe(false)
+    // A remount reads `autoModeNoticeSeen` back through config.get.
+    h.state.mode = 'manual'
+    const remounted = new SessionStore(SESSION, h.fake.bridge, [])
+    await remounted.refreshFacts()
+    await remounted.setApprovalMode('auto')
+    expect(remounted.getSnapshot().facts?.approvalMode).toBe('auto')
+    expect(remounted.getSnapshot().autoNotice).toBe(false)
+  })
+
+  it('06 验收 33: a refused switch to auto brings no notice', async () => {
+    const h = modeBridge(false)
+    h.fake.handle(sessionSetApprovalMode, () => ({ ok: false as const, code: 'policy' as const }))
+    const store = new SessionStore(SESSION, h.fake.bridge, [])
+    expect(await store.setApprovalMode('auto')).toBe(false)
+    expect(store.getSnapshot().autoNotice).toBe(false)
+    expect(h.fake.calls(configGet)).toEqual([])
+  })
+
+  it.each([
+    [{ code: 'blocked-repeatedly' as const, count: 20, scope: 'round' as const }, 'round', 20],
+    [{ code: 'blocked-repeatedly' as const, count: 3 }, 'consecutive', 3],
+    // A child stopped on three in a row while the round went on: only the mode tells.
+    [{ code: 'completed' as const }, 'consecutive', CONSECUTIVE_BLOCK_CAP],
+  ])(
+    '06 验收 34: a Run in auto that leaves the task in manual brings the downgrade line (%j)',
+    async (endReason, scope, count) => {
+      const h = modeBridge(true)
+      h.state.mode = 'auto'
+      const store = new SessionStore(SESSION, h.fake.bridge, [])
+      const detach = store.attach()
+      await store.refreshFacts()
+      h.state.mode = 'manual' // the kernel's `by: 'downgrade'`
+      h.fake.emit(chatEvent, {
+        type: 'done',
+        sessionId: SESSION,
+        stopReason: 'end-turn',
+        endReason,
+      })
+      await settle()
+      expect(store.getSnapshot().facts?.approvalMode).toBe('manual')
+      expect(store.getSnapshot().downgrade).toEqual({ scope, count })
+      store.dismissDowngrade()
+      expect(store.getSnapshot().downgrade).toBeNull()
+      detach()
+    },
+  )
+
+  it('06 验收 34: a policy fold, the user’s own switch and a Run still in auto bring no downgrade line', async () => {
+    const h = modeBridge(true)
+    h.state.mode = 'auto'
+    const store = new SessionStore(SESSION, h.fake.bridge, [])
+    const detach = store.attach()
+    const blocked = { code: 'blocked-repeatedly' as const, count: 3 }
+    const done = () =>
+      h.fake.emit(chatEvent, {
+        type: 'done',
+        sessionId: SESSION,
+        stopReason: 'end-turn',
+        endReason: blocked,
+      })
+    // Still in auto: the mode is read, nothing shows.
+    await store.refreshFacts()
+    done()
+    await settle()
+    expect(store.getSnapshot().downgrade).toBeNull()
+    // The policy turned auto off (D40).
+    h.state.disabled = true
+    done()
+    await settle()
+    expect(store.getSnapshot().downgrade).toBeNull()
+    // The user chose manual while the Run closed.
+    h.state.disabled = false
+    await store.refreshFacts()
+    done()
+    void store.setApprovalMode('manual')
+    await settle()
+    expect(store.getSnapshot().facts?.approvalMode).toBe('manual')
+    expect(store.getSnapshot().downgrade).toBeNull()
+    detach()
+  })
+
+  it('06 验收 34: going back to auto clears the downgrade line, which does not come back', async () => {
+    const h = modeBridge(true)
+    h.state.mode = 'auto'
+    const store = new SessionStore(SESSION, h.fake.bridge, [])
+    const detach = store.attach()
+    await store.refreshFacts()
+    h.state.mode = 'manual'
+    h.fake.emit(chatEvent, {
+      type: 'done',
+      sessionId: SESSION,
+      stopReason: 'end-turn',
+      endReason: { code: 'blocked-repeatedly', count: 3 },
+    })
+    await settle()
+    expect(store.getSnapshot().downgrade).toEqual({ scope: 'consecutive', count: 3 })
+    await store.setApprovalMode('auto')
+    expect(store.getSnapshot().downgrade).toBeNull()
+    await store.setApprovalMode('manual')
+    expect(store.getSnapshot().downgrade).toBeNull()
+    detach()
+  })
+
+  it('06 验收 34: a switch the user makes while the Run’s end is read is not a downgrade', async () => {
+    const h = modeBridge(true)
+    h.state.mode = 'auto'
+    const store = new SessionStore(SESSION, h.fake.bridge, [])
+    const detach = store.attach()
+    await store.refreshFacts()
+    // The read the Run's end starts is held; meanwhile the user goes back to manual.
+    const held = Promise.withResolvers<void>()
+    let first = true
+    const facts = () => ({
+      established: true,
+      profile: 'cowork' as const,
+      workspace: { folders: ['/work/a'], origin: 'picked' as const },
+      approvalMode: h.state.mode,
+    })
+    h.fake.handle(sessionFacts, async () => {
+      if (!first) return facts()
+      first = false
+      await held.promise
+      return facts()
+    })
+    h.fake.emit(chatEvent, {
+      type: 'done',
+      sessionId: SESSION,
+      stopReason: 'end-turn',
+      endReason: { code: 'blocked-repeatedly', count: 3 },
+    })
+    await settle()
+    await store.setApprovalMode('manual')
+    held.resolve()
+    await settle()
+    expect(store.getSnapshot().facts?.approvalMode).toBe('manual')
+    expect(store.getSnapshot().downgrade).toBeNull()
+    detach()
+  })
+
+  it('06 验收 34: the consecutive count the renderer restates is the kernel’s', () => {
+    expect(CONSECUTIVE_BLOCK_CAP).toBe(MACHINE_DENIAL_CAP)
+  })
 })

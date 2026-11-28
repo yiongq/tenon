@@ -129,6 +129,16 @@ export class DesktopSandboxRuntime implements HostSandbox, SandboxPorts {
       : this.real!.posture()
   }
 
+  /**
+   * Spec 06 §接口 `SandboxPorts.autoCommands` (D14, D29): whether a command may go unasked in auto.
+   * macOS answers yes; Linux names itself, since its sandbox cannot keep a command's new repository
+   * files (auto-tier-hardening); anything else answers no.
+   */
+  autoCommands(): 'yes' | 'linux' | 'no' {
+    const platform = this.options.platform
+    return platform === 'darwin' ? 'yes' : platform === 'linux' ? 'linux' : 'no'
+  }
+
   canReach(q: { sessionId: string; hosts: readonly string[] }): boolean {
     try {
       return this.allowedDomains(q.hosts).length > 0

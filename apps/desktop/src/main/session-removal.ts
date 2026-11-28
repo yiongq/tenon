@@ -78,6 +78,12 @@ export interface SessionRemovalDeps {
   readonly removeFolder?: (folder: AbsolutePath) => Promise<void>
   /** Spec 05 §快照怎么拍: remove profile-owned snapshots only after the store commits. */
   readonly removeSnapshots?: (sessionId: string) => Promise<void>
+  /**
+   * Called synchronously when a clear or a delete of the session begins, before anything is awaited:
+   * what main kept for the session's old incarnation is void (spec 06 §界面「文件夹授权」, D42: a
+   * pending folder grant).
+   */
+  readonly onRemoval?: (sessionId: string) => void
 }
 
 /** Step 2: the folder and everything in it; one that is not there is not an error. */
@@ -98,6 +104,7 @@ export function createSessionRemoval(deps: SessionRemovalDeps): SessionRemoval {
     const folder = toolOutputDirFor(deps.profileDir, sessionId)
     // In the call's own synchronous stretch: a send right behind it is refused, and so is a lease.
     pending.set(sessionId, (pending.get(sessionId) ?? 0) + 1)
+    deps.onRemoval?.(sessionId)
     try {
       // Step 0: the only lease the root can have is the one live now.
       const runs = deps.runs()

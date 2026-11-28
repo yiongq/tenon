@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next'
 import { categoryOf } from '@/lib/approval-keys'
 import { questionsOf, summaryOf } from '@/lib/ask'
 import { toolObject, toolSentence, toolSlotValue } from '@/lib/tool-sentence'
+import { unaskedReason } from '@/lib/decision-copy'
 import { tx } from '@/lib/tx'
 import { hostOfUrl } from '@/lib/url-host'
 import { visible } from '@/lib/visible'
@@ -55,10 +56,11 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
   const callKey = props.toolCallId
   const input = (props.args ?? {}) as Readonly<Record<string, unknown>>
   const outcome = (props.result ?? null) as ToolOutcomeViewContract | null
-  const effect = toolRowEffect(outcome, props.toolName)
-  const marker = toolMarker(outcome)
+  const why = open ? unaskedReason(outcome) : null
   const rounds = useSnapshotRounds()
   const saved = callSnapshot(rounds.data?.rounds ?? [], callKey)
+  const effect = toolRowEffect(outcome, props.toolName, saved?.canRestore === true)
+  const marker = toolMarker(outcome)
   const pending =
     snapshot.pending?.waitKind === 'approval' && snapshot.pending.anchorCallKey === callKey
       ? snapshot.pending
@@ -178,6 +180,13 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
       ) : null}
       {open ? (
         <div className="flex flex-col gap-1" data-testid="tool-row-details">
+          {why === null ? null : (
+            <p data-testid="tool-row-why" className="text-micro text-text-secondary">
+              <span className="text-text-muted">{t('tool.whyUnasked')}</span>
+              {t('summary.separator')}
+              {tx(t, why.key, why.facts)}
+            </p>
+          )}
           <p className="text-micro text-text-muted">{t('tool.input')}</p>
           <ClampedPre
             className="rounded-sm bg-surface-1 p-2 font-mono text-micro text-text-primary"

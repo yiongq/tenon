@@ -62,3 +62,18 @@ it('06 验收 19: the adapter also asks on bidi controls and blocks C1 controls'
       expect(await run(text)).toEqual({ kind: 'none' })
   }
 })
+
+it('06 验收 19: national flags pass, while subdivision flags and joined emoji ask (spec §已知限制)', async () => {
+  // Pinned so a railguard upgrade cannot change what the known-limits sentence promises unnoticed.
+  const inspector = railguardInspector()
+  const run = (text: string) =>
+    inspector.beforeCall(input('Bash', { command: `echo ${text}` }), new AbortController().signal)
+  // A national flag is two regional indicators, nothing hidden.
+  expect(await run('\u{1F1EF}\u{1F1F5}')).toEqual({ kind: 'none' })
+  // England: a black flag and Unicode tag characters; the rainbow flag and a family join with U+200D.
+  expect(await run('\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}')).toEqual(
+    HIDDEN,
+  )
+  expect(await run('\u{1F3F3}\u{FE0F}\u{200D}\u{1F308}')).toEqual(HIDDEN)
+  expect(await run('\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}')).toEqual(HIDDEN)
+})

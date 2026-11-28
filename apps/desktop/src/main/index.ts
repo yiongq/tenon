@@ -60,6 +60,8 @@ import tokensCss from '../styles/tokens.css?raw'
 import { registerModelRoutes } from './model-routes.js'
 import { createShutdown, refuseWhileShuttingDown, registerSandboxSignals } from './shutdown.js'
 import { startSingleInstance } from './single-instance.js'
+import { registerApprovalModeRoutes, trackApprovalModeDefault } from './approval-mode-routes.js'
+import { createFolderGrants } from './folder-grants.js'
 import { registerInspectorRoutes } from './inspector-routes.js'
 import { registerSandboxRoutes } from './sandbox-routes.js'
 import { registerSnapshotRoutes, snapshotWindowCanAccess } from './snapshot-routes.js'
@@ -184,6 +186,9 @@ async function main(): Promise<void> {
   registerBuiltinProviders(builtin)
   const preferred = preferredSystemLanguages()
   const startupConfig = await readConfig(host.fs, host.identity)
+  const approvalModeDefault = trackApprovalModeDefault(host.identity, startupConfig.approvalMode)
+  // Spec 06 D42: the pending folder grants, in this process's memory only.
+  const folderGrants = createFolderGrants()
   // M6 §注册表视图 (01 修补 6「desktop 接线」): run assembly, the provider routes and the model routes
   // all take the builtin definitions plus the custom vendor instances, the latter following every
   // write of `config.json` from this startup read on.
@@ -235,6 +240,8 @@ async function main(): Promise<void> {
       ? null
       : createSessionService({
           host,
+          // Spec 06 §档位怎么存、怎么切: read when a send starts, from config.json's `approvalMode`.
+          approvalModeDefault,
           schemaValidator,
           userSetting: mcp.userSetting,
           tape,
@@ -273,6 +280,8 @@ async function main(): Promise<void> {
           runs: () => loop?.registry ?? null,
           profileDir: absolutePath(host.identity.profileDir),
           removeSnapshots: (sessionId) => host.snapshots.removeSession(sessionId),
+          // Spec 06 D42: a clear starts a new incarnation; the folder grant for the old one is void.
+          onRemoval: (sessionId) => folderGrants.invalidate(sessionId),
           log: (line) => console.warn(line),
         })
   const removing = (sessionId: string): boolean => removal?.removing(sessionId) ?? false
@@ -392,6 +401,7 @@ async function main(): Promise<void> {
       snapshotWindowCanAccess(event, BrowserWindow.getAllWindows(), appUrl()),
   })
   registerInspectorRoutes({ ipcMain: routes, sessions, gate: recovery.ready })
+  registerApprovalModeRoutes({ ipcMain: routes, sessions, gate: recovery.ready })
   registerApprovalRoutes({ ipcMain: routes, sessions, gate: recovery.ready })
   registerWorkspaceRoutes({
     ipcMain: routes,
@@ -399,6 +409,7 @@ async function main(): Promise<void> {
     host,
     home,
     gate: recovery.ready,
+    grants: folderGrants,
     // Main's own dialog, over the window that asked: the only way a folder is added (A9).
     onWorkspaceChanged: (sessionId, folders) => {
       refreshSensitive(folders)

@@ -11,6 +11,8 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { PathText } from '@/components/ui/path-text'
+import type { FolderGrantChoice } from '@/lib/folder-grant'
+import { visible } from '@/lib/visible'
 import {
   GRANT_BUTTONS,
   GRANT_DEFAULT,
@@ -138,6 +140,71 @@ export function GrantDialog(props: {
               onClick={() => props.onChoose(choice)}
             >
               {t(`mcp.grant.${choice}`)}
+            </Button>
+          ))}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** The folder version's answers, in the connector dialog's order (components.md `GrantDialog`). */
+const FOLDER_BUTTONS: readonly FolderGrantChoice[] = ['cancel', 'always', 'session']
+
+/**
+ * 「允许访问这个文件夹」 (spec 06 §界面「文件夹授权」): for folders picked or prefilled that were never
+ * 「以后都允许」. 「取消」 adds nothing; 「允许」 adds them to this task; 「以后都允许」 also keeps them, so
+ * a later pick does not ask — no new task gets them by itself. The grant is access only: writes are
+ * still asked in manual. Focus starts on 「取消」, like the connector's.
+ */
+export function FolderGrantDialog(props: {
+  folders: readonly string[]
+  busy?: boolean
+  onChoose: (choice: FolderGrantChoice) => void
+}) {
+  const { t } = useTranslation()
+  const cancel = useRef<HTMLButtonElement | null>(null)
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!props.busy && !open) props.onChoose('cancel')
+      }}
+    >
+      <DialogContent
+        data-testid="folder-grant"
+        showCloseButton={false}
+        initialFocus={cancel}
+        className="max-h-[85vh] overflow-y-auto sm:max-w-xl"
+      >
+        <DialogHeader>
+          <DialogTitle>
+            {props.folders.length > 1
+              ? t('folder.grant.titleMany', { count: props.folders.length })
+              : t('folder.grant.title')}
+          </DialogTitle>
+          <DialogDescription>{t('folder.grant.description')}</DialogDescription>
+        </DialogHeader>
+        <ul data-testid="folder-grant-paths" className="flex min-w-0 flex-col gap-1">
+          {props.folders.map((folder) => (
+            <li key={folder} className="font-mono text-ui-sm">
+              {/* Escaped like a card's object (02 ②′): a hidden or direction character is shown. */}
+              <PathText text={visible(folder)} />
+            </li>
+          ))}
+        </ul>
+        <p className="text-ui-sm text-text-muted">{t('folder.grant.alwaysNote')}</p>
+        <DialogFooter>
+          {FOLDER_BUTTONS.map((choice) => (
+            <Button
+              key={choice}
+              ref={choice === 'cancel' ? cancel : undefined}
+              data-testid={`folder-grant-${choice}`}
+              variant={choice === 'session' ? 'default' : 'outline'}
+              disabled={props.busy}
+              onClick={() => props.onChoose(choice)}
+            >
+              {t(`folder.grant.${choice}`)}
             </Button>
           ))}
         </DialogFooter>

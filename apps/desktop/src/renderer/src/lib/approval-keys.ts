@@ -13,6 +13,8 @@ export const APPROVAL_CLICK_GUARD_MS = 400
 type Card = Pick<ConfirmRequestInput, 'reason' | 'kind' | 'facts' | 'target'>
 
 const CATEGORIES: readonly string[] = flaggedCategorySchema.options
+/** The categories this build has a sentence for; anything else on a command card is general (06 D31). */
+export const FLAGGED_CATEGORIES = CATEGORIES
 
 /** The allow button embeds the unchanged scope words (presentation-r1 ⑥). */
 export const allowLabelKey = 'confirm.allowScoped' as const

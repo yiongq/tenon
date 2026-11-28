@@ -63,6 +63,16 @@ const context = vi.hoisted(() => ({
   answered: new Map<string, Answered>(),
   expanded: false,
   profile: 'cowork',
+  // The root session's snapshot numbers by call; none unless a test sets them.
+  snapshotCalls: [] as { callKey: string; snapshotId: string }[],
+  snapshotStatus: 'tree' as 'tree' | 'warming' | 'file-only' | 'unavailable',
+  canRestore: true,
+  // Another round of the same session, put before or after round-1, when a test sets one.
+  otherRound: null as null | {
+    readonly at: 'before' | 'after'
+    readonly calls: { callKey: string; snapshotId: string }[]
+    readonly canRestore: boolean
+  },
 }))
 vi.mock('react', async (importOriginal) => {
   const actual = await importOriginal<typeof React>()
@@ -81,6 +91,46 @@ vi.mock('../src/renderer/src/runtime/ChatProvider', () => ({
   }),
 }))
 vi.mock('../src/renderer/src/runtime/mcp-store', () => ({ useMcp: () => ({ servers: [] }) }))
+const snapshotRound = vi.hoisted(
+  () => (id: string, calls: { callKey: string; snapshotId: string }[], canRestore: boolean) => ({
+    roundRunId: id,
+    runIds: [id],
+    endMessageId: null,
+    calls,
+    canRestore,
+    incompleteCoverage: false,
+    commandsWithoutSnapshot: false,
+  }),
+)
+vi.mock('../src/renderer/src/runtime/SnapshotProvider', () => {
+  return {
+    useSnapshotRounds: () => {
+      const own = snapshotRound('round-1', context.snapshotCalls, context.canRestore)
+      const other =
+        context.otherRound === null
+          ? null
+          : snapshotRound('round-2', context.otherRound.calls, context.otherRound.canRestore)
+      return {
+        sessionId: 'session-1',
+        data:
+          context.snapshotCalls.length === 0
+            ? null
+            : {
+                ok: true,
+                status: context.snapshotStatus,
+                rounds:
+                  other === null
+                    ? [own]
+                    : context.otherRound?.at === 'before'
+                      ? [other, own]
+                      : [own, other],
+                incompleteRestores: [],
+              },
+        refresh: async () => null,
+      }
+    },
+  }
+})
 
 let en: I18n
 let zh: I18n
@@ -670,4 +720,181 @@ it('05 验收 48: successful Delete renders the file and consequence in both loc
       }),
     ),
   ).toBeNull()
+})
+
+function allowedWrite(code: string): ToolOutcomeViewContract {
+  return {
+    effect: 'write',
+    reversibility: 'snapshotted',
+    state: 'completed',
+    source: null,
+    output: 'ok',
+    permission: { verdict: 'allow', code: code as never, facts: { toolName: 'Write' } },
+  }
+}
+
+it('06 验收 38: an expanded allowed row shows why it was not asked; a folded one, a carded one and an asked one do not', async () => {
+  const allowed = allowedWrite
+  const input = { file_path: '/work/a.txt', content: 'x' }
+  const why = (html: string) =>
+    strip(/data-testid="tool-row-why"[^>]*>([\s\S]*?)<\/p>/.exec(html)?.[1] ?? '')
+  try {
+    context.expanded = true
+    expect(why(await renderRow(null, 'Write', input, zh, false, allowed('auto-mode')))).toBe(
+      '为什么没问 · 自动档放行',
+    )
+    expect(why(await renderRow(null, 'Write', input, en, false, allowed('session-allowed')))).toBe(
+      'Why it wasn’t asked · You allowed this for the session',
+    )
+    // A call a card asked about, or one that was not allowed, adds nothing.
+    const carded: ToolOutcomeViewContract = {
+      ...allowed('default-ask'),
+      approval: {
+        outcome: 'allowed',
+        scope: 'once',
+        target: { type: 'path', path: '/work/a.txt' },
+      },
+    }
+    expect(await renderRow(null, 'Write', input, zh, false, carded)).not.toContain('tool-row-why')
+    const denied: ToolOutcomeViewContract = {
+      ...allowed('org-policy'),
+      permission: { verdict: 'deny', code: 'org-policy', facts: { toolName: 'Write' } },
+    }
+    expect(await renderRow(null, 'Write', input, zh, false, denied)).not.toContain('tool-row-why')
+    // Folded, the row is as it was.
+    context.expanded = false
+    expect(await renderRow(null, 'Write', input, zh, false, allowed('auto-mode'))).not.toContain(
+      'tool-row-why',
+    )
+  } finally {
+    context.expanded = false
+  }
+})
+
+it.each(['allow', 'ask', 'deny'] as const)(
+  '06 验收 44: an unknown summary code under %s verdict changes the expanded row only where it already shows a reason',
+  async (verdict) => {
+    const outcome: ToolOutcomeViewContract = {
+      effect: 'write',
+      state: verdict === 'deny' ? 'not-run' : 'completed',
+      source: verdict === 'deny' ? 'policy' : null,
+      output: '',
+      permission: { verdict, code: 'unknown' as never, facts: { toolName: 'Write' } },
+    }
+    try {
+      context.expanded = true
+      const html = await renderRow(null, 'Write', { file_path: '/work/a.txt' }, zh, false, outcome)
+      // Only an allowed call already has a reason line; there it is the neutral sentence.
+      expect(/data-testid="tool-row-why"/.test(html)).toBe(verdict === 'allow')
+      expect(html.includes('这一步已放行。')).toBe(verdict === 'allow')
+    } finally {
+      context.expanded = false
+    }
+  },
+)
+
+function bash(reversibility: 'unknown' | 'irreversible'): ToolOutcomeViewContract {
+  return {
+    effect: 'write',
+    reversibility,
+    state: 'completed',
+    source: null,
+    output: 'ok',
+    isError: false,
+  }
+}
+
+it('command-undo-copy 验收 3: an expanded Bash row whose round can still be restored says its task-folder files can be; without a number, with a round that cannot, or irreversible, it keeps its sentence; other tools are unchanged', async () => {
+  expect(toolRowEffect(bash('unknown'), 'Bash', true)?.undoKey).toBe('confirm.undo.commandRestored')
+  expect(toolRowEffect(bash('unknown'), 'Bash', false)?.undoKey).toBe('confirm.undo.unknown')
+  expect(toolRowEffect(bash('unknown'), 'Bash')?.undoKey).toBe('confirm.undo.unknown')
+  expect(toolRowEffect(bash('irreversible'), 'Bash', true)?.undoKey).toBe('confirm.irreversible')
+  for (const name of ['Write', 'Edit', 'Delete', 'notes__echo', 'WebFetch']) {
+    for (const reversibility of [
+      'read-only',
+      'revertible',
+      'snapshotted',
+      'irreversible',
+      'unknown',
+    ] as const) {
+      const outcome = { ...bash('unknown'), reversibility }
+      expect(toolRowEffect(outcome, name, true), `${name}/${reversibility}`).toEqual(
+        toolRowEffect(outcome, name, false),
+      )
+    }
+  }
+  const expected = {
+    'zh-CN': {
+      restored:
+        '运行了这条命令 · 它在任务文件夹里改的文件能随这一轮还原；文件夹外的、联网发出的、.git 里的和被排除的文件撤不回。',
+      old: '运行了这条命令 · 如果它改了东西，Tenon 没法替你撤回。',
+    },
+    en: {
+      restored:
+        "Ran this command · Files it changed in the task folder can be restored with this round; anything outside the folder, sent online, in .git, or excluded can't.",
+      old: "Ran this command · If this changes anything, Tenon can't undo it.",
+    },
+  } as const
+  context.expanded = true
+  try {
+    for (const i18n of [zh, en]) {
+      const copy = expected[i18n.language as keyof typeof expected]
+      context.snapshotCalls = [{ callKey: 'call-1', snapshotId: 'snapshot-1' }]
+      // oxlint-disable-next-line no-await-in-loop -- with and without a snapshot number, both locales
+      expect(didText(await renderRow(null, 'Bash', {}, i18n, false, bash('unknown')))).toBe(
+        copy.restored,
+      )
+      context.snapshotCalls = [{ callKey: 'another-call', snapshotId: 'snapshot-1' }]
+      // oxlint-disable-next-line no-await-in-loop -- another call's number is not this call's
+      expect(didText(await renderRow(null, 'Bash', {}, i18n, false, bash('unknown')))).toBe(
+        copy.old,
+      )
+      // Its own number, but the round can no longer be restored (snapshots cleared, or already
+      // restored): the settlement line has no 「可还原」, so neither does the row.
+      context.snapshotCalls = [{ callKey: 'call-1', snapshotId: 'snapshot-1' }]
+      context.canRestore = false
+      // oxlint-disable-next-line no-await-in-loop -- a round that cannot be restored
+      expect(didText(await renderRow(null, 'Bash', {}, i18n, false, bash('unknown')))).toBe(
+        copy.old,
+      )
+      // Another round of the session, before or after this call's, never decides for this row: an
+      // earlier round cleared or restored while a later one can, and the other way round.
+      for (const at of ['before', 'after'] as const) {
+        for (const own of [false, true]) {
+          context.canRestore = own
+          context.otherRound = {
+            at,
+            calls: [{ callKey: 'other-call', snapshotId: 'snapshot-2' }],
+            canRestore: !own,
+          }
+          // oxlint-disable-next-line no-await-in-loop -- this call's round against the other one
+          expect(didText(await renderRow(null, 'Bash', {}, i18n, false, bash('unknown')))).toBe(
+            own ? copy.restored : copy.old,
+          )
+        }
+      }
+      context.otherRound = null
+      context.canRestore = true
+      // The row reads its own call and round, not the session's snapshot state now.
+      for (const status of ['warming', 'file-only', 'unavailable'] as const) {
+        context.snapshotStatus = status
+        // oxlint-disable-next-line no-await-in-loop -- the session's current state does not matter
+        expect(didText(await renderRow(null, 'Bash', {}, i18n, false, bash('unknown')))).toBe(
+          copy.restored,
+        )
+      }
+      context.snapshotStatus = 'tree'
+      context.snapshotCalls = []
+      // oxlint-disable-next-line no-await-in-loop -- no snapshot read model at all
+      expect(didText(await renderRow(null, 'Bash', {}, i18n, false, bash('unknown')))).toBe(
+        copy.old,
+      )
+    }
+  } finally {
+    context.expanded = false
+    context.snapshotCalls = []
+    context.snapshotStatus = 'tree'
+    context.canRestore = true
+    context.otherRound = null
+  }
 })

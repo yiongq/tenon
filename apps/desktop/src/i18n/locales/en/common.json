@@ -108,6 +108,39 @@
     "switchModel": "Switch to {provider} {model}",
     "settings": "Open settings"
   },
+  "approvalMode": {
+    "trigger": "Approval mode: {mode}",
+    "manual": {
+      "name": "Manual",
+      "description": "Asks you before anything that makes changes."
+    },
+    "auto": {
+      "name": "Auto",
+      "description": "Stops asking for workspace changes that can be restored and for commands in the sandbox; still asks for what can’t be undone, what reaches outside the folder, and what the rules stop.",
+      "noSnapshot": "This task can’t keep snapshots, so changes are still asked."
+    },
+    "banner": {
+      "text": "Auto: no asking for changes that can be restored",
+      "back": "Back to manual"
+    },
+    "notice": {
+      "title": "Auto mode is on",
+      "unasked": "Workspace changes that can be restored and commands in the sandbox are no longer asked one by one.",
+      "asked": "Anything that can’t be undone, reaches outside the folder, or is stopped by the rules is still asked first.",
+      "restore": "If something goes wrong, click “Can be restored” on this round’s summary line to go back in one step.",
+      "settings": "Settings",
+      "dismiss": "Got it"
+    },
+    "downgrade": {
+      "consecutive": "Blocked {count} times in a row. Stopped and switched back to manual.",
+      "round": "Blocked {count} times this round. Stopped and switched back to manual.",
+      "close": "Close"
+    },
+    "settings": {
+      "title": "Approval mode",
+      "hint": "New tasks start in this mode; tasks already open keep theirs."
+    }
+  },
   "thread": {
     "empty": "Start a conversation",
     "you": "You",
@@ -459,7 +492,8 @@
       "failed": "Didn't go through",
       "delete": "Deleted this file"
     },
-    "Delete": "Delete {path}"
+    "Delete": "Delete {path}",
+    "whyUnasked": "Why it wasn’t asked"
   },
   "closure": {
     "user-rejected": "You declined this.",
@@ -510,7 +544,8 @@
     "title": {
       "file": {
         "read": "Read this file?",
-        "write": "Change this file?"
+        "write": "Change this file?",
+        "delete": "Delete this file?"
       },
       "command": "Run this command?",
       "network": {
@@ -543,10 +578,19 @@
         "exfiltration": "This request might take your data elsewhere.",
         "inspector-failed": "Tenon couldn't check that this step is safe.",
         "hidden-characters": "This path or command contains invisible characters. They are marked so you can check it first.",
-        "control-characters": "This path or command contains control characters. They are marked so you can check it first."
+        "control-characters": "This path or command contains control characters. They are marked so you can check it first.",
+        "unknown": "Tenon’s checks want you to look at this step again."
       },
       "command": "Running a command needs your OK.",
-      "interaction-required": "This connector wants you to confirm it yourself."
+      "interaction-required": "This connector wants you to confirm it yourself.",
+      "autoAsk": {
+        "no-snapshot": "This task can’t keep snapshots, so auto mode asks you first too.",
+        "linux": "On Linux, auto mode still asks before commands: repository files a command creates can’t be protected here.",
+        "platform": "On this computer, auto mode still asks before commands.",
+        "sandbox": "Command isolation isn’t ready or only partly working, so auto mode asks you first.",
+        "redirect": "This command writes its output into a file and replaces what was there, so auto mode asks you first too.",
+        "unknown": "Auto mode asks you about this step too."
+      }
     },
     "irreversible": "This can’t be undone.",
     "allow": "Allow",
@@ -585,6 +629,8 @@
       "snapshotted": "Snapshot taken first; you can undo this round.",
       "unknown": "If this changes anything, Tenon can't undo it.",
       "unknownFile": "Tenon can't undo this change for you.",
+      "commandRestorable": "Files it changes in the task folder can usually be restored with this round; anything outside the folder, sent online, in .git, or excluded can't.",
+      "commandRestored": "Files it changed in the task folder can be restored with this round; anything outside the folder, sent online, in .git, or excluded can't.",
       "network": {
         "search": "The search words leave this computer.",
         "url": "The address is sent to {host}."
@@ -660,7 +706,25 @@
     "prefillPending": "Used before, not yet added",
     "prefillUse": "{count, plural, one {Use this folder} other {Use these # folders}}",
     "rootRefused": "Choose a folder inside the disk instead of its root.",
-    "homeWarning": "This is your home folder or its parent. It may contain private files."
+    "homeWarning": "This is your home folder or its parent. It may contain private files.",
+    "grant": {
+      "title": "Allow access to this folder",
+      "titleMany": "Allow access to these {count} folders",
+      "description": "Once allowed, this task can read and search the files in it; changes are still asked as the approval mode says.",
+      "alwaysNote": "With “Always allow”, picking it again won’t show this; new tasks don’t get it on their own.",
+      "cancel": "Cancel",
+      "always": "Always allow",
+      "session": "Allow",
+      "stale": "That choice has expired. Pick the folder again."
+    },
+    "access": {
+      "manage": "Manage folder access",
+      "title": "Folder access",
+      "hint": "Folders you chose “Always allow” for are listed here, and picking them won’t ask again. Revoking affects later picks only; tasks already using one keep it.",
+      "empty": "None yet.",
+      "revoke": "Revoke",
+      "revokeLabel": "Revoke {path}"
+    }
   },
   "mcp": {
     "settings": "Settings",
@@ -842,7 +906,7 @@
   },
   "sandbox": {
     "title": "Permissions & network",
-    "description": "Choose which sites commands can reach and which files they can change.",
+    "description": "The approval mode for new tasks, folder access, and which sites commands can reach.",
     "loading": "Loading settings…",
     "allowlist": "Network allowlist",
     "siteScope": "Access is per site, not per action: commands can connect to listed sites and upload content to them.",
@@ -1034,8 +1098,13 @@
       "inspector-flagged": "Checks found invisible characters; confirmation is needed",
       "own-output-read": "Reading content produced in this session",
       "no-approval-needed": "This action does not need confirmation",
-      "auto-mode": "Allowed by the automatic mode settings",
-      "task-grant": "You allowed this for the task"
+      "auto-mode": "Allowed by auto mode",
+      "task-grant": "You allowed this for the task",
+      "unknown": {
+        "allow": "This step was allowed.",
+        "ask": "This step needs your OK.",
+        "deny": "This step was stopped."
+      }
     },
     "promisedSkip": {
       "excluded": "The card said a snapshot was taken; this path is skipped because it is now excluded.",

@@ -68,6 +68,15 @@ export const configSchema = z.object({
    * from before M6 drops it on its next write (no configVersion, T8).
    */
   customVendors: z.array(customVendorSchema).default([]),
+  /** Spec 06: a new task's mode; only the settings pane writes it (through `config.set`). */
+  approvalMode: z.enum(['manual', 'auto']).default('manual'),
+  /** Spec 06 §界面「说明条」: 「知道了」 was pressed once; the notice never shows again. */
+  autoModeNoticeSeen: z.boolean().default(false),
+  /**
+   * Spec 06 §界面「文件夹授权」: the real paths 「以后都允许」 kept. Only main writes it, after the user
+   * answered main's own grant; `config.set` does not take it (D42).
+   */
+  folderAccess: z.array(z.string().min(1)).default([]),
 })
 export type Config = z.infer<typeof configSchema>
 
@@ -98,6 +107,8 @@ export type ConfigPatch = z.infer<typeof configPatchSchema>
 export const configSetRequestSchema = z.object({
   locale: localeSettingSchema.optional(),
   sidebarCollapsed: z.boolean().optional(),
+  approvalMode: z.enum(['manual', 'auto']).optional(),
+  autoModeNoticeSeen: z.literal(true).optional(),
 })
 export type ConfigSetRequest = z.infer<typeof configSetRequestSchema>
 

@@ -46,11 +46,8 @@ type ProjectedSessionRow = Omit<SessionMessageRow, 'content'> & {
 }
 
 // Exported so `noUnusedLocals` keeps them; nothing imports them. Read off outcome.ts itself.
-export type SummaryBothWays = Assert<
-  Extends<DecisionSummaryContract, DecisionSummary> extends true
-    ? Extends<DecisionSummary, DecisionSummaryContract>
-    : false
->
+// The summary is one way since spec 06 D32: every kernel summary crosses; the read code has `unknown`.
+export type KernelSummaryCrosses = Assert<Extends<DecisionSummary, DecisionSummaryContract>>
 export type StatesBothWays = Assert<
   Extends<z.infer<typeof outcome.executionStateSchema>, ExecutionState> extends true
     ? Extends<ExecutionState, z.infer<typeof outcome.executionStateSchema>>

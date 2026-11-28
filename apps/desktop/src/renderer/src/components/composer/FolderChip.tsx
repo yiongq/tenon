@@ -5,19 +5,27 @@ import {
   workspaceRemove,
   workspaceUsePrefill,
 } from '@tenon-app/contracts'
-import type { IpcResult, RouteResponse } from '@tenon-app/contracts'
+import type { IpcResult, PendingGrant, RouteResponse, workspaceGrant } from '@tenon-app/contracts'
 import { XIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
+import { FolderGrantDialog } from '@/components/settings/GrantDialog'
+import { answerFolderGrant, pendingGrantOf } from '@/lib/folder-grant'
+import type { FolderGrantChoice } from '@/lib/folder-grant'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { settingsHash } from '@/lib/settings-sections'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
 
 function folderName(path: string): string {
   return path.split(/[\\/]/).findLast((part) => part !== '') ?? path
 }
 
-/** Folders enter the workspace only through main's dialog or an explicit prefill confirmation. */
+/**
+ * Folders enter the workspace only through main's dialog or an explicit prefill confirmation — and,
+ * for a folder never 「以后都允许」, only once the grant dialog is answered (spec 06 §界面「文件夹授权」,
+ * D42): main hands back a token for its own copy of the paths, and the answer carries only that.
+ */
 export function FolderChip({
   autoOpenPrefill = false,
 }: {
@@ -29,7 +37,9 @@ export function FolderChip({
   const [prefill, setPrefill] = useState<readonly string[]>([])
   const [open, setOpen] = useState(false)
   const [preserveFocus, setPreserveFocus] = useState(false)
-  const [feedback, setFeedback] = useState<'root' | 'home' | null>(null)
+  const [feedback, setFeedback] = useState<'root' | 'home' | 'stale' | null>(null)
+  const [grant, setGrant] = useState<PendingGrant | null>(null)
+  const [granting, setGranting] = useState(false)
   const offerOnMount = useRef(autoOpenPrefill)
   const workspace = snapshot.facts?.workspace ?? null
   // Re-read on every expansion and after workspace changes. Only the initial offer after turning
@@ -56,16 +66,43 @@ export function FolderChip({
   }, [workspace, open])
   if (snapshot.facts?.profile !== 'cowork' || workspace === null) return null
   const refresh = (): Promise<void> => store.refreshFacts()
-  const selected = async (
-    result: IpcResult<RouteResponse<typeof workspacePick>>,
+  const settled = async (
+    result: IpcResult<RouteResponse<typeof workspacePick | typeof workspaceGrant>>,
   ): Promise<void> => {
     if (!result.ok) return
     if (!result.data.ok) {
       if (result.data.code === 'root-folder') setFeedback('root')
+      if (result.data.code === 'stale') setFeedback('stale')
       return
     }
     setFeedback(result.data.warning === 'home' ? 'home' : null)
     await refresh()
+  }
+  const selected = async (result: IpcResult<RouteResponse<typeof workspacePick>>) => {
+    const pending = pendingGrantOf(result)
+    if (pending !== null) {
+      setOpen(false)
+      setFeedback(null)
+      setGrant(pending)
+      return
+    }
+    await settled(result)
+  }
+  // The dialog was opened from the popover: whatever the answer, the list comes back into view.
+  const answer = async (choice: FolderGrantChoice): Promise<void> => {
+    if (grant === null) return
+    const answering = answerFolderGrant(window.tenon, store.sessionId, grant, choice)
+    if (answering === null) {
+      setGrant(null)
+      setOpen(true)
+      return
+    }
+    setGranting(true)
+    const result = await answering
+    setGranting(false)
+    setGrant(null)
+    await settled(result)
+    setOpen(true)
   }
   const picked = workspace.origin === 'picked'
   const unconfirmed = prefill.filter((folder) => !workspace.folders.includes(folder))
@@ -173,11 +210,31 @@ export function FolderChip({
               </button>
             </div>
           )}
+          <a
+            data-testid="folder-access-settings"
+            href={settingsHash('permissions')}
+            className="self-start text-micro text-text-muted underline-offset-2 hover:underline"
+          >
+            {t('folder.access.manage')}
+          </a>
         </PopoverContent>
       </Popover>
+      {grant === null ? null : (
+        <FolderGrantDialog
+          folders={grant.folders}
+          busy={granting}
+          onChoose={(choice) => void answer(choice)}
+        />
+      )}
       {feedback === null ? null : (
         <output data-testid="folder-feedback" className="font-sans text-micro text-text-secondary">
-          {t(feedback === 'root' ? 'folder.rootRefused' : 'folder.homeWarning')}
+          {t(
+            feedback === 'root'
+              ? 'folder.rootRefused'
+              : feedback === 'stale'
+                ? 'folder.grant.stale'
+                : 'folder.homeWarning',
+          )}
         </output>
       )}
     </div>

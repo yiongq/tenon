@@ -12,6 +12,7 @@ import {
   keyAnswer,
   keyHints,
   objectParts,
+  titleKey,
   whyKey,
   undoKey,
   unavailableKey,
@@ -19,6 +20,7 @@ import {
 import { APPROVAL_CLICK_GUARD_MS, allowLabelKey, scopeKey } from '@/lib/approval-keys'
 import { hostOfUrl } from '@/lib/url-host'
 import { useMcp } from '@/runtime/mcp-store'
+import { useSnapshotRounds } from '@/runtime/SnapshotProvider'
 import { tx } from '@/lib/tx'
 import { visible } from '@/lib/visible'
 import type { PendingCard } from '@/runtime/session-store'
@@ -27,21 +29,6 @@ import type { PendingCard } from '@/runtime/session-store'
 export { APPROVAL_CLICK_GUARD_MS, reasonKey, scopeKey } from '@/lib/approval-keys'
 
 type Card = PendingCard['card']
-
-/** The question-style title, by kind and target — never words the model chose (H3). */
-function titleKey(card: Card): string {
-  if (card.kind === 'file') {
-    return card.reversibility === 'read-only'
-      ? 'confirm.title.file.read'
-      : 'confirm.title.file.write'
-  }
-  if (card.kind === 'network') {
-    return card.target.type === 'search'
-      ? 'confirm.title.network.search'
-      : 'confirm.title.network.url'
-  }
-  return card.kind === 'command' ? 'confirm.title.command' : 'confirm.title.tool'
-}
 
 /** The object line: the one thing the card is about, in full, escaped (②, ②′; E4). */
 export function ObjectLine(props: { readonly target: Card['target'] }): JSX.Element {
@@ -110,8 +97,8 @@ export function ApprovalCard(props: {
   const [showChange, setShowChange] = useState(change?.expanded === true)
   const hints = keyHints(card)
   const why = whyKey(card)
-  const undo = undoKey(card)
   const subtask = props.pending.callKey !== props.pending.anchorCallKey
+  const undo = undoKey(card, useSnapshotRounds().data?.status, subtask)
   const guarded = (): boolean => Date.now() - props.since < APPROVAL_CLICK_GUARD_MS
   const answer = (decision: 'allow' | 'deny'): void => {
     if (!guarded()) props.onRespond(decision)
