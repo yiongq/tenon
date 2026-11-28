@@ -8,9 +8,13 @@
  *      nothing sets the log path of Electron's own (`app.setAppLogsPath`, `getPath('logs')`, D17);
  *   2. the one `HostSecrets` is built in `host/index.ts` and nowhere else in the main process:
  *      `new KeychainSecrets` and `new MemorySecrets` appear in that file only;
- *   3. (spec §一直要成立的规矩 第 1 条, which lint guards in part) nothing in the main process outside
- *      `log/` writes the console, `process.stderr` or `process.stdout`, by any of the ways a source
- *      file can spell it, `dev-env.ts` no exception: lint has a hole there, this scan has none;
+ *   3. (spec §一直要成立的规矩 第 1 条, which lint and this scan guard together) nothing in the main
+ *      process outside `log/` writes the console, `process.stderr` or `process.stdout`, `dev-env.ts`
+ *      no exception. Neither is complete: lint names the properties, imports and globals it bans
+ *      (`.oxlintrc.json`), and this scan lists the spellings it knows (`TERMINAL_WRITERS`: the
+ *      property forms, the imports, an alias of `console`, `process` or `globalThis`, `writeSync` to
+ *      descriptor 1 or 2, `Reflect` on them). A spelling that is on neither list is not caught by
+ *      either, and the review has to catch it;
  *   4. (error-logs 验收 6) `logRouteFailures` is the outermost of the route table's wrappers; and
  *      (spec 段一评审 s8) the sandbox's change notice is not held back by the line about the
  *      helper paths.
@@ -129,6 +133,17 @@ const TERMINAL_WRITERS: ReadonlyArray<readonly [name: string, pattern: RegExp]> 
   ['process.emitWarning', /\bprocess\s*\??\.\s*emitWarning\b/u],
   ['node:console', /\bfrom\s+['"](?:node:)?console['"]/u],
   ['import("node:process")', /\bimport\(\s*['"](?:node:)?process['"]\s*\)/u],
+  // The bare name, not followed by a property: `const c = console`, `{ error } = console`, `use(console)`.
+  ['console alias', /(?<![\w$./:'"-])console\b(?![\w$-]|\s*[.[(])/u],
+  ['process alias', /\b(?:const|let|var)\s+[\w$]+\s*(?::[^=;]+)?=\s*process\b(?!\s*[.[])/u],
+  // Bare only: `globalThis as SomeGlobal` is how the e2e seams reach their own property.
+  ['globalThis alias', /\b(?:const|let|var)\s+[\w$]+\s*=\s*globalThis\s*(?:;|$)/mu],
+  ['{ … } = globalThis', /\{[^}]*\}\s*=\s*globalThis\b(?!\s*[.[])/u],
+  ['writeSync to descriptor 1 or 2', /\bwriteSync\(\s*[12]\s*,/u],
+  [
+    'Reflect on process, console or globalThis',
+    /\bReflect\s*\.\s*\w+\(\s*(?:process|console|globalThis)\b/u,
+  ],
 ]
 
 /** `import … from 'node:process'` that can reach stderr or stdout: by name, as a namespace or as the default. */
@@ -169,12 +184,24 @@ it('error-logs 验收 1: outside log/ nothing in the main process writes the con
     { path: 'k.ts', text: "process.emitWarning('x')" },
     { path: 'l.ts', text: "import { Console } from 'node:console'" },
     { path: 'm.ts', text: "const p = await import('node:process')" },
+    // Through a name the file gives it, through a descriptor, through reflection.
+    { path: 'n.ts', text: "const c = console\nc.error('x')" },
+    { path: 'o.ts', text: "const { error } = console\nerror('x')" },
+    { path: 'p.ts', text: "const p = process\np.stderr.write('x')" },
+    { path: 'q.ts', text: "const g = globalThis\ng.console.error('x')" },
+    { path: 'r.ts', text: "const { process: p } = globalThis\np.stderr.write('x')" },
+    { path: 's.ts', text: "writeSync(2, 'x')" },
+    { path: 't.ts', text: "Reflect.get(process, 'stderr').write('x')" },
     { path: 'dev-env.ts', text: "process.stderr.write('dev-env has no exception')" },
     { path: 'log/app-log.ts', text: 'process.stderr.write(text)' },
     // What is not a writer: an address, a name that merely has the word in it, cwd, a type.
     { path: 'presets.ts', text: "'https://bailian.console.aliyun.com/cn-beijing'" },
     { path: 'ok-1.ts', text: "import { cwd } from 'node:process'\nconst consoleLevel = 1" },
     { path: 'ok-2.ts', text: "import type { Stats } from 'node:fs'\nconst stderrColor = 'red'" },
+    {
+      path: 'ok-3.ts',
+      text: "watchUncaught(process, appLog)\nconst platform = process.platform\nwriteSync(fd, 'x')\nconst seam = globalThis as SeamGlobal\nconst url = 'https://platform.kimi.com/console/api-keys'",
+    },
   ]
   expect(terminalWriters(sample)).toEqual([
     'a.ts: console.',
@@ -191,6 +218,13 @@ it('error-logs 验收 1: outside log/ nothing in the main process writes the con
     'k.ts: process.emitWarning',
     'l.ts: node:console',
     'm.ts: import("node:process")',
+    'n.ts: console alias',
+    'o.ts: console alias',
+    'p.ts: process alias',
+    'q.ts: globalThis alias',
+    'r.ts: { … } = globalThis',
+    's.ts: writeSync to descriptor 1 or 2',
+    't.ts: Reflect on process, console or globalThis',
     'dev-env.ts: process.stderr / process.stdout',
   ])
 

@@ -5,10 +5,11 @@
  * somebody else's, the old marker read back, and `close`.
  *
  * Real `createAppLog` on real temp folders, the files read back from disk. A case whose name says
- * 复现 reproduces a finding of the segment-1 review (the three reviews of 2026-11-28) and fails until
- * that finding is fixed; the others hold today and keep a number or a check from moving.
+ * 复现 reproduces a finding of the segment-1 review (the three reviews of 2026-11-28, and the
+ * recheck of f5a1784) and fails until that finding is fixed; the others hold today and keep a number
+ * or a check from moving.
  *
- * Three fakes, each made to behave as the real thing in the few ways the cases lean on:
+ * Four fakes, each made to behave as the real thing in the few ways the cases lean on:
  *
  *   - `node:fs` is spied (`spy: true`, every call passes through) so that the owner a stat reports can
  *     be changed for one path, as an `uid` of another user would be if the test ran as root. It
@@ -19,6 +20,9 @@
  *     time, which `createAppLog`'s single `uid` option cannot do.
  *   - `writeSync`, while a case says the disk is full, throws what `write(2)` raises on a full disk
  *     (an Error whose `code` is `ENOSPC`) and writes nothing; while it does not, it is the real one.
+ *   - `openSync` of a path ending in `main.jsonl`, while a case has armed it, throws what `open(2)`
+ *     raises for a process out of descriptors (an Error whose `code` is `EMFILE`), that many times
+ *     and without opening anything; after that, and when it is not armed, it is the real one.
  *   - the background writer of the FIFO case is a real `sh` that opens the FIFO for writing 1.5 s
  *     from now. It stands in for what ends a blocking `open(O_RDONLY)` of a FIFO in real life (a
  *     writer turning up): the case is not left hanging if the open blocks, and says so by how long
@@ -54,6 +58,8 @@ const actual = await vi.importActual<typeof FsModule>('node:fs')
 /** The paths whose owner is reported as somebody else's, and what each open descriptor was opened on. */
 const foreign = { paths: new Set<string>() }
 const disk = { full: false }
+/** How many more opens of a `main.jsonl` fail. */
+const openFailure = { left: 0 }
 const opened = new Map<number, string>()
 
 function asSomebodyElses(st: Stats): Stats {
@@ -62,6 +68,10 @@ function asSomebodyElses(st: Stats): Stats {
 
 beforeAll(() => {
   vi.mocked(openSync).mockImplementation(((...args: unknown[]) => {
+    if (openFailure.left > 0 && String(args[0]).endsWith('main.jsonl')) {
+      openFailure.left -= 1
+      throw Object.assign(new Error('EMFILE: too many open files, open'), { code: 'EMFILE' })
+    }
     const fd = Reflect.apply(actual.openSync, actual, args) as number
     opened.set(fd, String(args[0]))
     return fd
@@ -92,6 +102,7 @@ beforeAll(() => {
 const savedTz = process.env['TZ']
 afterEach(() => {
   disk.full = false
+  openFailure.left = 0
   foreign.paths.clear()
   sweepTempRoots()
   if (savedTz === undefined) delete process.env['TZ']
@@ -254,6 +265,266 @@ describe('a rotation that cannot rename', () => {
     },
   )
 })
+
+// ---- a rotation that cannot rename, and what is owed after it ---------------------------------------
+
+/** A log of 4 KiB files that has turned over once, the next turn-over made impossible. */
+interface Blocked extends OpenedLog {
+  readonly main: string
+  /** One line of 100 characters from a source of its own: `s000`, `s001`, … */
+  filler(): void
+  /** How many fillers have been written. */
+  fillers(): number
+  /** Lets the rename work again. */
+  unblock(): void
+  /** Writes fillers until the file is full and a turn-over has been tried (and refused). */
+  fillUntilRefused(): void
+}
+
+function blockedLog(): Blocked {
+  const started = openLog({ packaged: true, maxBytes: 4096 })
+  const { log, dir } = started
+  writeLifecycle(log)
+  let written = 0
+  const filler = (): void => {
+    log.line(`s${pad(written)}`, 'info')('z'.repeat(100))
+    written += 1
+    expect(written).toBeLessThan(200)
+  }
+  while (!existsSync(join(dir, 'main.1.jsonl'))) filler()
+  mkdirSync(join(dir, 'main.2.jsonl'))
+  writeFileSync(join(dir, 'main.2.jsonl', 'in-the-way'), 'x')
+  vi.mocked(renameSync).mockClear()
+  return {
+    ...started,
+    main: join(dir, 'main.jsonl'),
+    filler,
+    fillers: () => written,
+    unblock: () => {
+      rmSync(join(dir, 'main.2.jsonl'), { recursive: true, force: true })
+    },
+    fillUntilRefused() {
+      while (turnOverTries() === 0) filler()
+    },
+  }
+}
+
+const ALL_FILES = ['main.jsonl', 'main.1.jsonl', 'main.2.jsonl']
+
+describe('what is owed after a turn-over that did not work', () => {
+  it('error-logs 验收 16: 复现 while the file cannot turn over, every line is in a file or counted: what the cap held back counts as the lines it was, not as the one line that says so', () => {
+    const b = blockedLog()
+    b.fillUntilRefused()
+    // The file is full: none of these fits. Sixty pass the cap of their source and are given up for
+    // the file, forty are held back by the cap itself.
+    for (let i = 0; i < 100; i += 1) b.log.line('host', 'warn')('z'.repeat(100))
+    // A minute on, the window ends and the line that says "forty" has no room either.
+    b.clock.advance(61_000)
+    b.log.line('other', 'warn')('z'.repeat(100))
+    b.unblock()
+    b.clock.advance(61_000)
+    b.log.line('after', 'info')('the file turns over now')
+    b.log.close()
+
+    const all = ALL_FILES.flatMap((name) => recordsOf(join(b.dir, name)))
+    const kept = all.filter(
+      (r) => r['event'] === 'line' && /^(?:s\d{3}|host|other|after)$/u.test(String(r['source'])),
+    )
+    const dropped = all.filter((r) => r['event'] === 'log.dropped')
+    // The one that triggered the turn-over, a hundred of the host and one of the other: 102, in
+    // the one note, written when the turn-over worked.
+    expect(dropped.map((r) => [r['source'], r['count']])).toEqual([['rotate', 102]])
+    expect(kept.length + 102).toBe(b.fillers() + 100 + 1 + 1)
+    expect(kept.filter((r) => r['source'] === 'host' || r['source'] === 'other')).toEqual([])
+  })
+
+  it('error-logs 验收 16: 复现 a run of one interface error that cannot be written is counted as the errors it stands for', () => {
+    const b = blockedLog()
+    b.fillUntilRefused()
+    const boom = {
+      event: 'renderer.error',
+      message: 'boom',
+      source: 'app.js',
+      line: 1,
+      repeats: 1,
+    } as const
+    // The first goes out at once and is given up; nine more only add to the count of the run.
+    for (let i = 0; i < 10; i += 1) b.log.write('error', boom)
+    // The minute is over, the file is still full: the run is written as one line carrying 10, and
+    // that is given up as the nine it adds to the first; the line that starts the window as one.
+    b.clock.advance(61_000)
+    b.log.line('tick', 'info')('z'.repeat(100))
+    b.unblock()
+    b.clock.advance(61_000)
+    b.log.line('after', 'info')('the file turns over now')
+    b.log.close()
+
+    const all = ALL_FILES.flatMap((name) => recordsOf(join(b.dir, name)))
+    expect(all.filter((r) => r['event'] === 'renderer.error')).toEqual([])
+    // The one that triggered the turn-over, the ten errors and the tick.
+    expect(
+      all.filter((r) => r['event'] === 'log.dropped').map((r) => [r['source'], r['count']]),
+    ).toEqual([['rotate', 12]])
+  })
+
+  it('error-logs 验收 16: 复现 a line that was given up is not copied to the new file as though it had been written', () => {
+    const b = blockedLog()
+    b.fillUntilRefused()
+    // Too big for what is left of the file: given up. Its kind is one of the five that are copied.
+    b.log.write('info', { event: 'sandbox.posture', state: 'degraded', reasons: ['r'.repeat(300)] })
+    b.unblock()
+    b.clock.advance(61_000)
+    b.log.line('after', 'info')('the file turns over now')
+    b.log.close()
+
+    const top = recordsOf(b.main).filter((r) => r['carried'] === true)
+    expect(top.map((r) => r['event']).toSorted()).toEqual(LIFECYCLE)
+    // What is copied is the posture that was written, not the one that was not.
+    expect(top.find((r) => r['event'] === 'sandbox.posture')).toMatchObject({
+      state: 'active',
+      reasons: [],
+    })
+    // The trigger and the posture: two lines given up, and no copy is among them.
+    expect(
+      recordsOf(b.main)
+        .filter((r) => r['event'] === 'log.dropped')
+        .map((r) => [r['source'], r['count']]),
+    ).toEqual([['rotate', 2]])
+  })
+
+  it('error-logs 验收 13: 复现 a turn-over whose new file cannot be opened is a failed one: the line and what comes in the minute are counted, and a minute on the copies and the count are written', () => {
+    const { log, dir, clock, stderr } = openLog({ packaged: true, maxBytes: 4096 })
+    const main = join(dir, 'main.jsonl')
+    writeLifecycle(log)
+    let written = 0
+    const filler = (): void => {
+      log.line(`s${pad(written)}`, 'info')('z'.repeat(100))
+      written += 1
+      expect(written).toBeLessThan(200)
+    }
+    // The next open of main.jsonl, which is the one after the rename, fails.
+    openFailure.left = 1
+    while (!existsSync(join(dir, 'main.1.jsonl'))) filler()
+    // The rename worked and the line that made the file turn over is given up with the new file.
+    expect(existsSync(main)).toBe(false)
+    // Five more inside the minute: not written either, because it is a failed turn-over and the next
+    // try is a minute away.
+    for (let i = 0; i < 5; i += 1) filler()
+    expect(existsSync(main)).toBe(false)
+
+    clock.advance(60_000)
+    log.line('after', 'info')('the file is there again')
+    log.close()
+
+    const records = recordsOf(main)
+    expect(
+      records
+        .slice(0, 4)
+        .map((r) => [r['event'], r['carried']])
+        .toSorted(),
+    ).toEqual(LIFECYCLE.map((event) => [event, true]))
+    expect(records[4]).toMatchObject({ event: 'log.dropped', source: 'rotate', count: 6 })
+    expect(records[5]).toMatchObject({ event: 'line', source: 'after' })
+    // Every filler is in the old file or counted.
+    const kept = recordsOf(join(dir, 'main.1.jsonl')).filter((r) => r['event'] === 'line')
+    expect(kept.length + 6).toBe(written)
+    expect(stderr).toHaveLength(1)
+    expect(stderr[0]).toContain('EMFILE')
+  })
+
+  it('error-logs 验收 17: 复现 close tries to turn the file over once more even inside the minute of waiting: the count owed and app.quit are written', () => {
+    const b = blockedLog()
+    b.fillUntilRefused()
+    b.unblock()
+    // No time passes: the minute is not over.
+    b.log.close()
+
+    const records = recordsOf(b.main)
+    expect(records.at(-1)).toMatchObject({ event: 'app.quit' })
+    expect(
+      records.filter((r) => r['event'] === 'log.dropped').map((r) => [r['source'], r['count']]),
+    ).toEqual([['rotate', 1]])
+    expect(
+      records
+        .slice(0, 4)
+        .map((r) => [r['event'], r['carried']])
+        .toSorted(),
+    ).toEqual(LIFECYCLE.map((event) => [event, true]))
+    expect(existsSync(join(b.dir, 'running.json'))).toBe(false)
+  })
+
+  it('error-logs 验收 17: what is owed is written at exit into the file that is still the open one, when the exit lines fit', () => {
+    const b = blockedLog()
+    const room = (): number => 4096 - statSync(b.main).size
+    while (room() > 700) b.filler()
+    expect(turnOverTries()).toBe(0)
+    // Does not fit: the turn-over is tried, cannot be done, and the line is given up.
+    b.log.line('big', 'warn')('z'.repeat(800))
+    expect(turnOverTries()).toBe(1)
+    // The rename is still blocked at exit; the count and the exit line are short and fit.
+    b.log.close()
+
+    const records = recordsOf(b.main)
+    expect(records.at(-2)).toMatchObject({ event: 'log.dropped', source: 'rotate', count: 1 })
+    expect(records.at(-1)).toMatchObject({ event: 'app.quit' })
+    expect(statSync(b.main).size).toBeLessThanOrEqual(4096)
+  })
+
+  it('error-logs 验收 13: a failed turn-over is tried again after 60 seconds: not at 59, at 60', () => {
+    const b = blockedLog()
+    b.fillUntilRefused()
+    expect(turnOverTries()).toBe(1)
+    b.clock.advance(59_000)
+    b.filler()
+    expect(turnOverTries()).toBe(1)
+    b.clock.advance(1_000)
+    b.filler()
+    expect(turnOverTries()).toBe(2)
+    b.clock.advance(59_999)
+    b.filler()
+    expect(turnOverTries()).toBe(2)
+  })
+
+  it('error-logs 验收 16: the lines copied to the new file keep their own time, not the time of the turn-over', () => {
+    process.env['TZ'] = 'UTC'
+    const { log, dir, clock } = openLog({ packaged: true, maxBytes: 4096 })
+    log.write('info', { event: 'window.shown' })
+    clock.advance(2_345)
+    for (let i = 0; !existsSync(join(dir, 'main.1.jsonl')); i += 1) {
+      log.line(`s${pad(i)}`, 'info')('z'.repeat(100))
+      expect(i).toBeLessThan(200)
+    }
+    const records = recordsOf(join(dir, 'main.jsonl'))
+    expect(records.find((r) => r['carried'] === true)).toMatchObject({
+      event: 'window.shown',
+      t: '2026-11-28T09:15:02.123+00:00',
+    })
+    expect(records.find((r) => r['carried'] !== true)?.['t']).toBe('2026-11-28T09:15:04.468+00:00')
+  })
+})
+
+// ---- a folder this user cannot read ---------------------------------------------------------------
+
+it.skipIf(process.platform === 'win32')(
+  'error-logs 验收 13: a log folder with no read permission (mode 000 or 300) is made 0700 by its path and written to',
+  () => {
+    for (const bits of [0o000, 0o300]) {
+      const logs = join(makeTempRoot(`unreadable-${bits.toString(8)}`), 'logs')
+      mkdirSync(logs, { mode: 0o700 })
+      chmodSync(logs, bits)
+      try {
+        const started = openLog({ dir: logs, makeDir: false, packaged: true })
+        expect([bits, started.result]).toEqual([bits, { ok: true, previous: 'none' }])
+        expect([bits, mode(logs)]).toEqual([bits, 0o700])
+        started.log.line('host', 'info')('written to a folder that had no permissions')
+        expect(readText(join(logs, 'main.jsonl'))).toContain('written to a folder that had no')
+        started.log.close()
+      } finally {
+        chmodSync(logs, 0o700)
+      }
+    }
+  },
+)
 
 // ---- what is copied to the top of a new file --------------------------------------------------
 

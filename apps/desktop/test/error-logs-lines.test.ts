@@ -202,6 +202,59 @@ it('error-logs 验收 2: 复现 a line that cannot be made to fit is written as 
   expect(records.filter((r) => r['text'] === 'an ordinary line after it')).toHaveLength(1)
 })
 
+it('error-logs 验收 2: the log.dropped that stands in for a line that cannot fit has the level of that line', () => {
+  const { log, dir } = openLog({ packaged: true })
+  log.write(
+    'error',
+    asEvent({ event: 'process.gone', process: 'gpu', reason: 'x', exitCode: 1, ...stubborn() }),
+  )
+  log.write('warn', asEvent({ event: 'line', source: 'host', text: 'too big', ...stubborn() }))
+  log.write(
+    'info',
+    asEvent({
+      event: 'app.start',
+      packaged: true,
+      platform: 'linux',
+      arch: 'x64',
+      userData: '/u',
+      ...stubborn(),
+    }),
+  )
+  expect(
+    linesOf(join(dir, 'main.jsonl'))
+      .map(parse)
+      .map((r) => [r['event'], r['source'], r['count'], r['level']]),
+  ).toEqual([
+    ['log.dropped', 'process.gone', 1, 'error'],
+    ['log.dropped', 'line', 1, 'warn'],
+    ['log.dropped', 'app.start', 1, 'info'],
+  ])
+})
+
+it('error-logs 验收 2: the line that stands in for one that cannot fit fits whatever the version is, and names the event: never a name of its own', () => {
+  // 5 000 control characters, each six bytes once escaped; the version is cut to 200 characters.
+  const { log, dir } = openLog({ packaged: true, version: '\u0001'.repeat(5_000) })
+  log.write(
+    'error',
+    asEvent({
+      event: 'process.gone',
+      process: 'gpu',
+      reason: 'crashed',
+      exitCode: 1,
+      ...stubborn(),
+    }),
+  )
+  const lines = linesOf(join(dir, 'main.jsonl'))
+  expect(lines).toHaveLength(1)
+  expect(Buffer.byteLength(lines[0] ?? '') + 1).toBeLessThanOrEqual(16 * 1024)
+  expect(parse(lines[0] ?? '')).toMatchObject({
+    event: 'log.dropped',
+    source: 'process.gone',
+    count: 1,
+    level: 'error',
+  })
+})
+
 /** The size on disk of one `main.uncaught` record with these stack frames. */
 function sizeWithFrames(frames: readonly string[]): { size: number; text: string } {
   const { log, dir } = openLog({ packaged: true })
