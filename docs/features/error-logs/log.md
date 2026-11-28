@@ -99,3 +99,5 @@
 - 复审（审 f5a1784，原文另记）：不通过，1 blocker、1 major、6 minor、6 建议；上一轮的 major 都已修对。blocker 是「ready 之后四项新增机制没有 owner 点名」，已补问，owner 四项都定了（D21–D24）；其余交下一轮修复。这是第二轮，按细则 8 再有一轮就停。
 - 测试改动：apps/desktop/test/error-logs-registry.test.ts · 文件头与「the table holds 10 000 values…」的用例名、一句注释 · spec 改了（D21，丢最久没用的）：原先的「丢最早登记的」「重复登记不改先后」改成「丢最久没被读到的」「重复登记排到最新」，只改了措辞；该用例的断言原样保留（新规则下仍成立），「重复登记排到最新」另加两条新用例。
 - 测试改动：scripts/lint-gate.test.mjs · 「still bans reading main's cwd outside dev-env.ts」 · 收紧（复审 m3）：dev-env.ts 也不能从 node:process 取 stderr、stdout、默认导出，也不能经 globalThis 写终端。原先断言它的 no-restricted-imports 是 `off`、no-restricted-properties 只有 process.stderr 与 process.stdout；改成断言前者是 error、只禁那三个名字（cwd 仍放开），后者再多 globalThis.console 与 globalThis.process 两项。
+- 第二轮修复的提交：测试 926abb8、040982f（log.md 的测试改动另在 9048ed8）；修复 74b75c9、d21d088、4e6ead4、a1e3a9a（2026-11-28；又一个新子 agent，先交测试再改）。
+- 第三轮复审（审 98aeecd，原文另记）：不通过，0 blocker、1 major、6 minor、6 建议；上一轮各条都已修。major 是登记值查找按「字段长 × 登记值长」退化（4096 字的值加 1 MB 文字卡 7.7 秒）。按细则 8 不再起第四轮；owner 2026-11-28 选「修完，只验这一处 (Recommended)」：修 major 与标了「合并前要改」的几条，再派新 agent 只核对这几处。
