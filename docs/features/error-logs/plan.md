@@ -2,7 +2,7 @@
 
 ## 当前 / 需要你
 
-当前：ready，段一做完、等 owner 合并 PR #101；段二在 `feat/error-logs-seg2`（从段一分支开出）开工，正在做第 3.0 步。
+当前：ready，段一做完、等 PR #101 的 CI 绿了合并（owner「绿了就合 #101」）；段二在 `feat/error-logs-seg2`，第 3.0 步做完，下一步 3.1、3.2（测试作者）。
 需要你：点名合并 PR #101（它改了 `.oxlintrc.json` 与 `scripts/lint-gate.test.mjs`，lint 规则变严，不开自动合并）。段二已在 `feat/error-logs-seg2` 上接着做（从段一分支开出，不等合并）。
 
 ## 分段
@@ -31,7 +31,7 @@
   - [x] 2.6 段一收尾：`pnpm format:check && pnpm lint && pnpm typecheck`、`pnpm vitest run --maxWorkers=2`、`python3 .sdd/spec-check.py`；新上下文的独立评审分「对照 spec」「安全」「突变」三个视角，StrykerJS 只对改动过的文件跑、只出报告（本项目补充第 5 条）；带证据的问题按细则分类处置，记进 log.md。
   - [x] 2.7 带 owner 按场景逐条走查段一（开发版，owner 要求时在他的 Mac 上起）：存错 key 再发消息、正常开关一次看生命周期行；每条明确回答对或不对，记进 log.md。
 - [ ] 3. 段二 · 崩溃、启动失败与菜单入口（守验收 8–12、15、19）
-  - [ ] 3.0 段二第一步：把 Open 里标「段二第一步」的几件做掉（先写红的用例再修的照做），删掉临时探针，把走查时 lead 定的两条补记进 decisions「agent 自定」。
+  - [x] 3.0 段二第一步：把 Open 里标「段二第一步」的几件做掉（先写红的用例再修的照做），删掉临时探针，把走查时 lead 定的两条补记进 decisions「agent 自定」。
   - [ ] 3.1 测试的前置：不经 Playwright 的启动方式（照 `apps/desktop/e2e/single-instance.spec.ts` 直接 spawn），验收 10、11、15 要用；Playwright 起的 Electron 自带禁用转储的开关（E7）。
   - [ ] 3.2 测试作者按本段的验收写测试：`child-process-gone` 用假的 EventEmitter，文件头写明它复现了真依赖的哪几条行为；验收 9 用 Playwright 在主进程里替换 `dialog.showErrorBox` 再抛错；验收 11 用假的 dialog、exit 断言顺序，e2e 把 `<profileDir>/mcp` 换成同名文件、直接 spawn、等 `app.startup-failed` 再 SIGKILL；验收 15 先跑正对照；验收 17 的 SIGTERM 在 e2e 里走「srt 还没装监听」那一支，登记之后的那一支由 `registerSandboxSignals` 的单元测试守。跑红、单独提交、log.md 记「测试作者提交」。
   - [ ] 3.2.1 走查的端到端用例（owner 2026-11-28「做，段二一起」）：Playwright 起真应用（内存钥匙串、假的模型服务返回 401、不读开发环境的 key），在设置界面里存一把假 key，从输入框发一条消息，断言日志里有那次失败、没有 key、没有消息内容；进 CI 的 e2e。
@@ -55,16 +55,13 @@
 
 ## 交接
 
-2026-11-28：段一全部做完，在 PR #101（`feat/error-logs-seg1`）：代码、三轮评审与修复、评审记录（审过 916d8b9，通过）、owner 走查（9 条都对）。owner 当天补定 D21–D26。下一步：owner 点名合并 #101；然后段二，从 Open 里标「段二第一步」的几件开始（先把走查时 lead 定的两条补记进 decisions「agent 自定」），并删掉临时探针 `apps/desktop/e2e/probe-unhandled-rejection.spec.ts` 与 `helpers/probe-unhandled-rejection-preload.cjs`。段二仍是测试作者与实现者分开；ready 之后要加规则或放宽数字，先问 owner 再写。
+2026-11-28：段一全部做完，在 PR #101（`feat/error-logs-seg1`）：代码、三轮评审与修复、评审记录（审过 916d8b9，通过）、owner 走查（9 条都对）。owner 当天补定 D21–D26。下一步：owner 点名合并 #101；然后段二，从 Open 里标「段二第一步」的几件开始（先把走查时 lead 定的两条补记进 decisions「agent 自定」）（临时探针已删）。段二仍是测试作者与实现者分开；ready 之后要加规则或放宽数字，先问 owner 再写。
 
 ## Open
 
-- 段二第一步：沙箱自检按预期被拦时不记警告（走查看到；连同版本号那条，开工时补记进 decisions「agent 自定」）。
 - 段二走查（3.6）：用正常的开发启动方式起，确认 `ver` 是 Tenon 的版本；配一个连接器，补看段一场景四（连接器日志只有本人能读）。
 
-- 段二第一步：长于 4096 字的值重复登记时不排到最新、计数会涨（复验的突变 N2）：先写红的用例再修。
-- 段二第一步：`apps/desktop/src/main/log/redact.ts` 里 `REDACT_INPUT_LIMIT` 上的注释写的最坏耗时不实，改成 D26 的实测数。
-- 段二第一步：spec 全文超过 heavy 档上限几十个字符（警告），文档同步时压掉。
+- 第 3.4 步文档同步时：spec 全文超过 heavy 档上限约 500 个字符（警告），压掉。
 
 - （已定）加了 `unhandledRejection` 监听后退出码不变、只少那两行警告，照现稿（log.md 探针一行）。
 - OAuth 令牌在存进钥匙串之后才登记（kernel `mcp/oauth.ts`）：要 owner 点名多动 kernel 一处才能改；第 4 步登记进「以后再说」。
