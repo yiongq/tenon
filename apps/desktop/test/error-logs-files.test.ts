@@ -9,7 +9,7 @@
  * recheck of f5a1784) and fails until that finding is fixed; the others hold today and keep a number
  * or a check from moving.
  *
- * Four fakes, each made to behave as the real thing in the few ways the cases lean on:
+ * Five fakes, each made to behave as the real thing in the few ways the cases lean on:
  *
  *   - `node:fs` is spied (`spy: true`, every call passes through) so that the owner a stat reports can
  *     be changed for one path, as an `uid` of another user would be if the test ran as root. It
@@ -23,6 +23,10 @@
  *   - `openSync` of a path ending in `main.jsonl`, while a case has armed it, throws what `open(2)`
  *     raises for a process out of descriptors (an Error whose `code` is `EMFILE`), that many times
  *     and without opening anything; after that, and when it is not armed, it is the real one.
+ *   - `closeSync`, while a case has armed it, closes the descriptor it is given and then throws what
+ *     `close(2)` raises when it reports a write that did not reach the disk (an Error whose `code`
+ *     is `EIO`), that many times; after that, and when it is not armed, it is the real one. The
+ *     descriptor is closed as it is in the systems where a failing close still releases it.
  *   - the background writer of the FIFO case is a real `sh` that opens the FIFO for writing 1.5 s
  *     from now. It stands in for what ends a blocking `open(O_RDONLY)` of a FIFO in real life (a
  *     writer turning up): the case is not left hanging if the open blocks, and says so by how long
@@ -31,6 +35,7 @@
 import { execFileSync, spawn } from 'node:child_process'
 import {
   chmodSync,
+  closeSync,
   existsSync,
   fstatSync,
   lstatSync,
@@ -60,6 +65,8 @@ const foreign = { paths: new Set<string>() }
 const disk = { full: false }
 /** How many more opens of a `main.jsonl` fail. */
 const openFailure = { left: 0 }
+/** How many more closes of a descriptor fail, after releasing it. */
+const closeFailure = { left: 0 }
 const opened = new Map<number, string>()
 
 function asSomebodyElses(st: Stats): Stats {
@@ -92,6 +99,13 @@ beforeAll(() => {
       throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' })
     return Reflect.apply(actual.writeSync, actual, args) as number
   }) as typeof writeSync)
+  vi.mocked(closeSync).mockImplementation(((...args: unknown[]) => {
+    Reflect.apply(actual.closeSync, actual, args)
+    if (closeFailure.left > 0) {
+      closeFailure.left -= 1
+      throw Object.assign(new Error('EIO: i/o error, close'), { code: 'EIO' })
+    }
+  }) as typeof closeSync)
   vi.mocked(fstatSync).mockImplementation(((...args: unknown[]) => {
     const st = Reflect.apply(actual.fstatSync, actual, args) as Stats
     const path = opened.get(args[0] as number)
@@ -103,6 +117,7 @@ const savedTz = process.env['TZ']
 afterEach(() => {
   disk.full = false
   openFailure.left = 0
+  closeFailure.left = 0
   foreign.paths.clear()
   sweepTempRoots()
   if (savedTz === undefined) delete process.env['TZ']
@@ -281,8 +296,8 @@ interface Blocked extends OpenedLog {
   fillUntilRefused(): void
 }
 
-function blockedLog(): Blocked {
-  const started = openLog({ packaged: true, maxBytes: 4096 })
+function blockedLog(packaged = true): Blocked {
+  const started = openLog({ packaged, maxBytes: 4096 })
   const { log, dir } = started
   writeLifecycle(log)
   let written = 0
@@ -504,6 +519,87 @@ describe('what is owed after a turn-over that did not work', () => {
       t: '2026-11-28T09:15:02.123+00:00',
     })
     expect(records.find((r) => r['carried'] !== true)?.['t']).toBe('2026-11-28T09:15:04.468+00:00')
+  })
+
+  it('error-logs 验收 13: 复现 a close that throws once during a turn-over is a failed turn-over: no old file is pushed out, what comes in the minute is counted, and a minute on the new file begins with the copies and the count', () => {
+    const { log, dir, clock, stderr } = openLog({ packaged: true, maxBytes: 4096 })
+    const main = join(dir, 'main.jsonl')
+    writeLifecycle(log)
+    let written = 0
+    const filler = (): void => {
+      log.line(`s${pad(written)}`, 'info')('z'.repeat(100))
+      written += 1
+      expect(written).toBeLessThan(300)
+    }
+    while (!existsSync(join(dir, 'main.1.jsonl'))) filler()
+    // The first turn-over worked: `main.1.jsonl` holds the first lines. The close of the next one fails.
+    closeFailure.left = 1
+    while (!existsSync(join(dir, 'main.2.jsonl'))) filler()
+    // Five more in the same instant, and none of them may push the two old files out.
+    for (let i = 0; i < 5; i += 1) filler()
+    const oldest = recordsOf(join(dir, 'main.2.jsonl'))
+    const newer = recordsOf(join(dir, 'main.1.jsonl'))
+    expect(oldest.some((r) => r['source'] === 's000')).toBe(true)
+    expect(newer.length).toBeGreaterThan(0)
+    expect(existsSync(main)).toBe(false)
+
+    // A minute on the file is made again: the copies, the count of what was given up, then the line.
+    clock.advance(61_000)
+    log.line('after', 'info')('the log writes again')
+    log.close()
+    const records = recordsOf(main)
+    expect(
+      records
+        .slice(0, 4)
+        .map((r) => [r['event'], r['carried']])
+        .toSorted(),
+    ).toEqual(LIFECYCLE.map((event) => [event, true]))
+    // The line that made the file turn over and the five after it.
+    expect(records[4]).toMatchObject({ event: 'log.dropped', source: 'rotate', count: 6 })
+    expect(records[5]).toMatchObject({ event: 'line', source: 'after' })
+    // Every filler is in one of the three files or counted.
+    const kept = [...oldest, ...newer, ...records].filter(
+      (r) => r['event'] === 'line' && /^s\d{3}$/u.test(String(r['source'])),
+    )
+    expect(kept.length + 6).toBe(written)
+    expect(stderr).toHaveLength(1)
+    expect(stderr[0]).toContain('EIO')
+  })
+
+  it('error-logs 验收 16: the copy of a kind of line that cannot fit in a line says it was copied, as the lines it stands for do', () => {
+    const { log, dir } = openLog({ packaged: true, maxBytes: 4096 })
+    // 150 keys of 200 characters: only a string value is ever cut, so this cannot be made to fit.
+    const stubborn = Object.fromEntries(
+      Array.from({ length: 150 }, (_, i) => [`k${pad(i)}${'_'.repeat(196)}`, i]),
+    )
+    log.write('info', {
+      event: 'sandbox.posture',
+      state: 'active',
+      reasons: [],
+      ...stubborn,
+    } as never)
+    for (let i = 0; !existsSync(join(dir, 'main.1.jsonl')); i += 1) {
+      log.line(`s${pad(i)}`, 'info')('z'.repeat(100))
+      expect(i).toBeLessThan(200)
+    }
+    // What was written for it the first time is a `log.dropped` that names it; so is the copy, and the
+    // copy is marked as one.
+    const top = recordsOf(join(dir, 'main.jsonl')).filter((r) => r['carried'] === true)
+    expect(top.map((r) => [r['event'], r['source'], r['count']])).toEqual([
+      ['log.dropped', 'sandbox.posture', 1],
+    ])
+  })
+
+  it('error-logs 验收 1: the count of lines a turn-over could not take is on the terminal of a development build, as every other line is', () => {
+    const b = blockedLog(false)
+    b.fillUntilRefused()
+    b.unblock()
+    b.clock.advance(61_000)
+    b.log.line('after', 'info')('the file turns over now')
+    b.log.close()
+    expect(b.stderr.filter((text) => text.startsWith('[log.dropped]'))).toEqual([
+      '[log.dropped] {"source":"rotate","count":1}\n',
+    ])
   })
 })
 

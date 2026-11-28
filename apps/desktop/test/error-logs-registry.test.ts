@@ -229,3 +229,108 @@ it('error-logs 验收 3: a field that is exactly one registered 8-character valu
   log.line('host', 'info')('Qk7#mP9z')
   expect(readRecords(join(dir, 'main.jsonl')).map((r) => r['text'])).toEqual(['[redacted]'])
 })
+
+it('error-logs 验收 3: 复现 what an upstream cut leaves of a value that begins with another registered value is taken out whole, whichever was registered first', () => {
+  const short = 'Kp7w-tenant-key-01'
+  const long = `${short}Rr4xTt8vWw2y-Uu5z`
+  for (const values of [
+    [short, long],
+    [long, short],
+  ]) {
+    const { log, dir } = openLog({ packaged: true })
+    for (const value of values) log.remember(value)
+    // The shorter value is found inside the cut text and taken out; the rest of the longer one, which
+    // is no start of anything and no whole value any more, must go with it.
+    log.line('kernel', 'error')(`gateway said: ${long.slice(0, 30)}…`)
+    log.line('kernel', 'error')(`gateway said: ${long.slice(0, 30)}…(+120)`)
+    log.line('kernel', 'error')(`gateway said: ${long.slice(0, 30)}`)
+    log.line('kernel', 'error')(`gateway said: ${long}`)
+    const texts = readRecords(join(dir, 'main.jsonl')).map((r) => String(r['text']))
+    expect(texts).toEqual([
+      'gateway said: [redacted]…',
+      'gateway said: [redacted]…(+120)',
+      'gateway said: [redacted]',
+      'gateway said: [redacted]',
+    ])
+    expect(leaksIn(dir, fragmentsOf(long))).toEqual([])
+  }
+})
+
+it('error-logs 验收 3: 复现 what an upstream cut leaves of a value that begins with the last character of another registered value is taken out whole', () => {
+  const first = 'Hm3x-first-value-Q'
+  const second = 'Q-second-value-Yz9'
+  const { log, dir } = openLog({ packaged: true })
+  log.remember(first)
+  log.remember(second)
+  // The two share the `Q`: the first is found whole, the second begins inside it and is cut at 16.
+  log.line('kernel', 'error')(`gateway said: ${first}${second.slice(1, 16)}…`)
+  expect(readRecords(join(dir, 'main.jsonl')).map((r) => r['text'])).toEqual([
+    'gateway said: [redacted]…',
+  ])
+  expect(leaksIn(dir, fragmentsOf(second))).toEqual([])
+})
+
+const taken = (log: { redact(text: string): string }, text: string): boolean =>
+  log.redact(`a ${text} b`) === 'a [redacted] b'
+
+it(
+  'error-logs 验收 3: two registered values that are written alike share the spelling: while one of them stays the spelling is taken out, when both are gone it is not',
+  { timeout: 120_000 },
+  () => {
+    // `again` is the base64 of `plain`: it is one of the spellings of `plain` and a value of its own.
+    const plain = 'refcount-key-0001-AB'
+    const again = 'cmVmY291bnQta2V5LTAwMDEtQUI='
+    const orders: Array<readonly [string, string]> = [
+      [plain, again],
+      [again, plain],
+    ]
+    for (const [older, newer] of orders) {
+      const { log } = openLog({ packaged: true })
+      log.remember(older)
+      log.remember(newer)
+      // 9 998 more make 10 000: nothing is let go yet.
+      for (let i = 1; i <= 9_998; i += 1) log.remember(lone(i))
+      expect([older, taken(log, again), taken(log, plain)]).toEqual([older, true, true])
+      // One more lets the older one go: the spelling stays, for the newer one still has it.
+      log.remember(lone(9_999))
+      expect([older, taken(log, again)]).toEqual([older, true])
+      // One more lets the newer go: nobody has the spelling now.
+      log.remember(lone(10_000))
+      expect([older, taken(log, again), taken(log, plain)]).toEqual([older, false, false])
+    }
+  },
+)
+
+it(
+  'error-logs 验收 3: the start that values share is taken out of a cut field while one of them is registered, and not once the last has been let go',
+  { timeout: 120_000 },
+  () => {
+    const { log } = openLog({ packaged: true })
+    for (const value of ['fork-start-AAAA-1', 'fork-start-BBBB-2', 'fork-start-CCCC-3']) {
+      log.remember(value)
+    }
+    // 9 997 more make 10 000.
+    for (let i = 1; i <= 9_997; i += 1) log.remember(lone(i))
+    const cut = (start: string): string => log.redact(`gateway said: ${start}…`)
+    expect([cut('fork-start-'), cut('fork-start-AAAA'), cut('fork-start-CCCC-')]).toEqual([
+      'gateway said: [redacted]…',
+      'gateway said: [redacted]…',
+      'gateway said: [redacted]…',
+    ])
+    // The first two go: the start they shared still belongs to the third, theirs do not.
+    log.remember(lone(9_998))
+    log.remember(lone(9_999))
+    expect([cut('fork-start-'), cut('fork-start-AAAA'), cut('fork-start-CCCC-')]).toEqual([
+      'gateway said: [redacted]…',
+      'gateway said: fork-start-AAAA…',
+      'gateway said: [redacted]…',
+    ])
+    // The third goes: nothing is left that begins so.
+    log.remember(lone(10_000))
+    expect([cut('fork-start-'), cut('fork-start-AAAA'), cut('fork-start-CCCC-')]).toEqual([
+      'gateway said: fork-start-…',
+      'gateway said: fork-start-AAAA…',
+      'gateway said: fork-start-CCCC-…',
+    ])
+  },
+)

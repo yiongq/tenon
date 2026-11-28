@@ -339,3 +339,49 @@ it('error-logs 验收 3: 复现 a secret in the version is replaced before the v
   expect(records.map((r) => r['ver'])).toEqual(records.map(() => expected))
   expect(leaksIn(dir, fragmentsOf(TABLE.raw))).toEqual([])
 })
+
+it('error-logs 验收 13: 复现 write never throws: an event whose field throws what cannot be made a string is left out, told to stderr once, and the lines after it are written', () => {
+  // Three things a getter can throw that no `String(error)` or `error.code` survives.
+  const unreadable = [
+    Object.create(null) as object,
+    {
+      toString(): string {
+        throw new Error('no text')
+      },
+    },
+    new Proxy(
+      {},
+      {
+        get(): never {
+          throw new Error('no property')
+        },
+      },
+    ),
+  ]
+  for (const thrown of unreadable) {
+    const { log, dir, stderr } = openLog({ packaged: true })
+    const hostile = {
+      event: 'line',
+      source: 'host',
+      get text(): string {
+        throw thrown
+      },
+    }
+    expect(() => {
+      log.write('warn', asEvent(hostile))
+    }).not.toThrow()
+    expect(() => {
+      log.write('warn', asEvent(hostile))
+    }).not.toThrow()
+    log.line('host', 'info')('the line after it')
+    log.close()
+    expect(stderr).toHaveLength(1)
+    expect(stderr[0]).toContain('the app log cannot be written')
+    expect(
+      linesOf(join(dir, 'main.jsonl'))
+        .map(parse)
+        .filter((r) => r['event'] === 'line')
+        .map((r) => r['text']),
+    ).toEqual(['the line after it'])
+  }
+})
