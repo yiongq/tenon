@@ -629,8 +629,8 @@
       "snapshotted": "Snapshot taken first; you can undo this round.",
       "unknown": "If this changes anything, Tenon can't undo it.",
       "unknownFile": "Tenon can't undo this change for you.",
-      "commandRestorable": "Files it changes can usually be restored with this round; anything sent online, in .git, or excluded can't.",
-      "commandRestored": "Files it changed can be restored with this round; anything sent online, in .git, or excluded can't.",
+      "commandRestorable": "Files it changes in the task folder can usually be restored with this round; anything outside the folder, sent online, in .git, or excluded can't.",
+      "commandRestored": "Files it changed in the task folder can be restored with this round; anything outside the folder, sent online, in .git, or excluded can't.",
       "network": {
         "search": "The search words leave this computer.",
         "url": "The address is sent to {host}."

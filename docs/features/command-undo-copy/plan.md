@@ -2,7 +2,7 @@
 
 ## 当前 / 需要你
 
-当前：ready（2026-11-28 owner「command-undo-copy 改 ready」，Tier 与 agent 自定 5 项一并认了）。第 1–4 步做完（log 2026-11-28），在做第 5 步：独立评审。
+当前：ready（2026-11-28 owner「command-undo-copy 改 ready」，Tier 与 agent 自定 5 项一并认了）。第 1–4 步做完（log 2026-11-28）；第 5 步第一轮评审不通过（3 条 major），已修，等复审。
 需要你：无。第 6 步真窗口验收要在你的 Mac 上起应用，到时先问你。
 
 ## 步骤

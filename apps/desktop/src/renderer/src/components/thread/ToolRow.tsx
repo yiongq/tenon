@@ -59,7 +59,7 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
   const why = open ? unaskedReason(outcome) : null
   const rounds = useSnapshotRounds()
   const saved = callSnapshot(rounds.data?.rounds ?? [], callKey)
-  const effect = toolRowEffect(outcome, props.toolName, saved !== null)
+  const effect = toolRowEffect(outcome, props.toolName, saved?.canRestore === true)
   const marker = toolMarker(outcome)
   const pending =
     snapshot.pending?.waitKind === 'approval' && snapshot.pending.anchorCallKey === callKey

@@ -764,8 +764,9 @@ const COMMAND_CARD: SentenceCard = {
   facts: {},
 }
 const RESTORABLE = {
-  'zh-CN': '它改的文件一般能随这一轮还原；联网发出的、.git 里的和被排除的文件撤不回。',
-  en: "Files it changes can usually be restored with this round; anything sent online, in .git, or excluded can't.",
+  'zh-CN':
+    '它在任务文件夹里改的文件一般能随这一轮还原；文件夹外的、联网发出的、.git 里的和被排除的文件撤不回。',
+  en: "Files it changes in the task folder can usually be restored with this round; anything outside the folder, sent online, in .git, or excluded can't.",
 } as const
 const OLD_COMMAND_UNDO = {
   'zh-CN': '如果它改了东西，Tenon 没法替你撤回。',
@@ -786,9 +787,16 @@ async function renderWithSnapshot(
   }
 }
 
-it('command-undo-copy 验收 1: a main-session command card under a whole-folder snapshot says its files can usually be restored, never the snapshot sentence', async () => {
-  // A manual-mode command card, and one auto mode still asks about (06 autoAsk).
-  for (const card of [COMMAND_CARD, { ...COMMAND_CARD, facts: { autoAsk: 'redirect' } }]) {
+it('command-undo-copy 验收 1: a main-session command card under a whole-folder snapshot says its task-folder files can usually be restored and nothing outside the folder can, never the snapshot sentence', async () => {
+  // A manual-mode command card, one auto mode still asks about (06 autoAsk), a rerun outside the
+  // sandbox and one with the sandbox unavailable: the sentence names the task folder and says
+  // nothing outside it comes back, so it holds for all of them.
+  for (const card of [
+    COMMAND_CARD,
+    { ...COMMAND_CARD, facts: { autoAsk: 'redirect' } },
+    { ...COMMAND_CARD, reason: 'elevated' as const },
+    { ...COMMAND_CARD, facts: { sandbox: 'unavailable' } },
+  ]) {
     expect(undoKey(card, 'tree', false)).toBe('confirm.undo.commandRestorable')
     for (const i18n of [zh, en]) {
       const locale = i18n.language as keyof typeof RESTORABLE

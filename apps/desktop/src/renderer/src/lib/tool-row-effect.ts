@@ -23,13 +23,14 @@ export function toolCategory(name: string) {
 }
 
 /**
- * `hasSnapshot`: this call has a snapshot number in the root session's rounds. A Bash call with
- * one says its files come back with the round (command-undo-copy); nothing else reads it.
+ * `restorable`: this call has a snapshot number in the root session's rounds and its round can
+ * still be restored (the settlement line's 「可还原」). A Bash call that is says its files in the
+ * task folder come back with the round (command-undo-copy); nothing else reads it.
  */
 export function toolRowEffect(
   outcome: ToolOutcomeViewContract | null,
   toolName: string,
-  hasSnapshot?: boolean,
+  restorable?: boolean,
 ) {
   if (!outcome) return null
   const category = toolCategory(toolName)
@@ -51,7 +52,7 @@ export function toolRowEffect(
           ? ('confirm.irreversible' as const)
           : reversibility === 'unknown' && (category === 'write' || category === 'delete')
             ? ('confirm.undo.unknownFile' as const)
-            : reversibility === 'unknown' && category === 'command' && hasSnapshot === true
+            : reversibility === 'unknown' && category === 'command' && restorable === true
               ? ('confirm.undo.commandRestored' as const)
               : (`confirm.undo.${reversibility}` as const),
     marker: toolMarker(outcome) !== null,

@@ -1165,15 +1165,15 @@ it('command-undo-copy 验收 4: both locales carry the two command restore sente
   const expected = {
     'zh-CN': {
       'confirm.undo.commandRestorable':
-        '它改的文件一般能随这一轮还原；联网发出的、.git 里的和被排除的文件撤不回。',
+        '它在任务文件夹里改的文件一般能随这一轮还原；文件夹外的、联网发出的、.git 里的和被排除的文件撤不回。',
       'confirm.undo.commandRestored':
-        '它改的文件能随这一轮还原；联网发出的、.git 里的和被排除的文件撤不回。',
+        '它在任务文件夹里改的文件能随这一轮还原；文件夹外的、联网发出的、.git 里的和被排除的文件撤不回。',
     },
     en: {
       'confirm.undo.commandRestorable':
-        "Files it changes can usually be restored with this round; anything sent online, in .git, or excluded can't.",
+        "Files it changes in the task folder can usually be restored with this round; anything outside the folder, sent online, in .git, or excluded can't.",
       'confirm.undo.commandRestored':
-        "Files it changed can be restored with this round; anything sent online, in .git, or excluded can't.",
+        "Files it changed in the task folder can be restored with this round; anything outside the folder, sent online, in .git, or excluded can't.",
     },
   } as const
   expect([...SUPPORTED_LOCALES].toSorted()).toEqual(Object.keys(expected).toSorted())

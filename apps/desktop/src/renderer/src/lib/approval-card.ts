@@ -50,8 +50,9 @@ export function whyKey(card: Omit<SentenceCard, 'reversibility'>): string | null
 
 /**
  * ④ First matching consequence: irreversible, online, then the remaining reversibilities. A
- * main-session command whose session snapshots the whole folder says its files can usually come
- * back with the round (command-undo-copy); a missing status reads as anything but `tree`.
+ * main-session command whose session snapshots the whole folder says its files in the task folder
+ * can usually come back with the round, and that nothing outside it can (command-undo-copy); a
+ * missing status reads as anything but `tree`.
  */
 export function undoKey(
   card: SentenceCard,

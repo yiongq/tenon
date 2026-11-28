@@ -65,6 +65,8 @@ const context = vi.hoisted(() => ({
   profile: 'cowork',
   // The root session's snapshot numbers by call; none unless a test sets them.
   snapshotCalls: [] as { callKey: string; snapshotId: string }[],
+  snapshotStatus: 'tree' as 'tree' | 'warming' | 'file-only' | 'unavailable',
+  canRestore: true,
 }))
 vi.mock('react', async (importOriginal) => {
   const actual = await importOriginal<typeof React>()
@@ -91,14 +93,14 @@ vi.mock('../src/renderer/src/runtime/SnapshotProvider', () => ({
         ? null
         : {
             ok: true,
-            status: 'tree',
+            status: context.snapshotStatus,
             rounds: [
               {
                 roundRunId: 'round-1',
                 runIds: ['round-1'],
                 endMessageId: null,
                 calls: context.snapshotCalls,
-                canRestore: true,
+                canRestore: context.canRestore,
                 incompleteCoverage: false,
                 commandsWithoutSnapshot: false,
               },
@@ -781,7 +783,7 @@ function bash(reversibility: 'unknown' | 'irreversible'): ToolOutcomeViewContrac
   }
 }
 
-it('command-undo-copy 验收 3: an expanded Bash row with a snapshot number says its files can be restored; without one, or irreversible, it keeps its sentence; other tools are unchanged', async () => {
+it('command-undo-copy 验收 3: an expanded Bash row whose round can still be restored says its task-folder files can be; without a number, with a round that cannot, or irreversible, it keeps its sentence; other tools are unchanged', async () => {
   expect(toolRowEffect(bash('unknown'), 'Bash', true)?.undoKey).toBe('confirm.undo.commandRestored')
   expect(toolRowEffect(bash('unknown'), 'Bash', false)?.undoKey).toBe('confirm.undo.unknown')
   expect(toolRowEffect(bash('unknown'), 'Bash')?.undoKey).toBe('confirm.undo.unknown')
@@ -803,12 +805,12 @@ it('command-undo-copy 验收 3: an expanded Bash row with a snapshot number says
   const expected = {
     'zh-CN': {
       restored:
-        '运行了这条命令 · 它改的文件能随这一轮还原；联网发出的、.git 里的和被排除的文件撤不回。',
+        '运行了这条命令 · 它在任务文件夹里改的文件能随这一轮还原；文件夹外的、联网发出的、.git 里的和被排除的文件撤不回。',
       old: '运行了这条命令 · 如果它改了东西，Tenon 没法替你撤回。',
     },
     en: {
       restored:
-        "Ran this command · Files it changed can be restored with this round; anything sent online, in .git, or excluded can't.",
+        "Ran this command · Files it changed in the task folder can be restored with this round; anything outside the folder, sent online, in .git, or excluded can't.",
       old: "Ran this command · If this changes anything, Tenon can't undo it.",
     },
   } as const
@@ -826,6 +828,24 @@ it('command-undo-copy 验收 3: an expanded Bash row with a snapshot number says
       expect(didText(await renderRow(null, 'Bash', {}, i18n, false, bash('unknown')))).toBe(
         copy.old,
       )
+      // Its own number, but the round can no longer be restored (snapshots cleared, or already
+      // restored): the settlement line has no 「可还原」, so neither does the row.
+      context.snapshotCalls = [{ callKey: 'call-1', snapshotId: 'snapshot-1' }]
+      context.canRestore = false
+      // oxlint-disable-next-line no-await-in-loop -- a round that cannot be restored
+      expect(didText(await renderRow(null, 'Bash', {}, i18n, false, bash('unknown')))).toBe(
+        copy.old,
+      )
+      context.canRestore = true
+      // The row reads its own call and round, not the session's snapshot state now.
+      for (const status of ['warming', 'file-only', 'unavailable'] as const) {
+        context.snapshotStatus = status
+        // oxlint-disable-next-line no-await-in-loop -- the session's current state does not matter
+        expect(didText(await renderRow(null, 'Bash', {}, i18n, false, bash('unknown')))).toBe(
+          copy.restored,
+        )
+      }
+      context.snapshotStatus = 'tree'
       context.snapshotCalls = []
       // oxlint-disable-next-line no-await-in-loop -- no snapshot read model at all
       expect(didText(await renderRow(null, 'Bash', {}, i18n, false, bash('unknown')))).toBe(
@@ -835,5 +855,7 @@ it('command-undo-copy 验收 3: an expanded Bash row with a snapshot number says
   } finally {
     context.expanded = false
     context.snapshotCalls = []
+    context.snapshotStatus = 'tree'
+    context.canRestore = true
   }
 })
