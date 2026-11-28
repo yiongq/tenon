@@ -2,15 +2,15 @@
 
 ## 当前 / 需要你
 
-当前：ready，段一开工（owner 2026-11-28「「错误日志」可以直接开工」；06 当天已 implemented）。spec 在分支 `claude/spec-skill-clarity-c6549f`（已合入最新 dev，0b3707e，等 owner 推送、开 PR）；实现在分支 `feat/error-logs-seg1`，从它开出。正在做第 2.1、2.2 步（测试作者）。第 2.0 步要起 Electron，不在 owner 的 Mac 上跑：写成一条临时 e2e，随段一第一次 CI 草稿 PR 跑，结果只影响段二的验收 9，不挡段一。
-需要你：推送 `claude/spec-skill-clarity-c6549f`（多了合并 dev 的提交）并给它开 PR。
+当前：ready，段一在做（实现分支 `feat/error-logs-seg1`，spec 在 PR #98）。第 2.1、2.2 步做完（测试作者提交 3e36885，12 条验收都有用例且是红的；两条静态扫描现在就绿，理由在 log）。下一步第 2.3–2.5 步（实现者）。第 2.0 步的探针已写成临时 e2e（`apps/desktop/e2e/probe-unhandled-rejection.spec.ts`），等段一第一次推 CI 草稿 PR 时出结果，只影响段二的验收 9。
+需要你：spec 的 PR #98 评审过、CI 绿后由你合并（或开自动合并）。
 
 ## 分段
 
 | 段 | 状态 | 这一段做完你能看到什么 | 守哪些验收 | 等 owner 做什么 |
 |---|---|---|---|---|
 | 一 · 报错写进日志 | 未开工 | 开发版里的报错、请求失败、模型请求失败、界面报错都进日志文件夹；里面没有 key；刷屏有上限；启动与退出都留一行；连接器日志只有你能读 | 1–7、13、14、16、17、18 | 批 ready；段末走查 |
-| 二 · 崩溃、启动失败与菜单入口 | 未开工，排在段一之后 | 进程崩了、主进程出错、被强杀之后都留下一行；启动失败有提示框；帮助菜单能打开日志文件夹；没有转储文件 | 8–12、15、19 | 段末走查（几种场景由 lead 演示） |
+| 二 · 崩溃、启动失败与菜单入口 | 未开工，排在段一之后 | 进程崩了、主进程出错、被强杀之后都留下一行；启动失败有提示框；帮助菜单能打开日志文件夹；没有转储文件 | 8–12、15、19；验收 17 里 SIGTERM 那一支的 e2e 也在这一段补（3.2） | 段末走查（几种场景由 lead 演示） |
 
 ## 步骤
 
@@ -23,8 +23,8 @@
   - [x] 1.5 再跑 spec-check；请 owner 读一页、批 ready。
 - [ ] 2. 段一 · 报错写进日志（守验收 1–7、13、14、16、17、18）
   - [ ] 2.0 实现之前先验 spec 开放问题 1：开发构建里各跑一次有、没有 `unhandledRejection` 监听，记下 stderr 与退出码；按开放问题里写好的分支改 spec（属收紧时直接改并记修订，要改行为就先问 owner）。
-  - [ ] 2.1 测试的前置：e2e 里读日志的 helper（照 `apps/desktop/e2e/helpers/launch.ts` 里 `configPathIn` 的样子写 `logsDirIn(userData)`）；编码变体由独立脚本先算好，抄进测试当字面量。
-  - [ ] 2.2 测试作者（新子 agent，只读 spec、evidence 与本 plan，不看实现）按本段的验收写测试：哨兵经真实路径进来（用 `MemorySecrets`、`TENON_SECRETS=memory`，不碰钥匙串），一张 `satisfies Record<LogEvent['event'], …>` 的哨兵表，跨截断点的哨兵，OAuth 分片的哨兵，静态扫描（只有 `log/` 与 `mcp/log-sink.ts` 写 `logs/`；只有 `host/index.ts` new 钥匙串）。验收 3 那张表要有「事先就在内存钥匙串里、只经 `get` 读出」的哨兵、跨 300、500、2000 字截断点的哨兵、互为前缀的两个哨兵，三种写法要注入进去而不只是检查它们找不到。跑一遍确认是红的，单独提交一次只改测试的提交，在 log.md 记一行「测试作者提交：<提交号>」。
+  - [x] 2.1 测试的前置：e2e 里读日志的 helper（照 `apps/desktop/e2e/helpers/launch.ts` 里 `configPathIn` 的样子写 `logsDirIn(userData)`）；编码变体由独立脚本先算好，抄进测试当字面量。
+  - [x] 2.2 测试作者（新子 agent，只读 spec、evidence 与本 plan，不看实现）按本段的验收写测试：哨兵经真实路径进来（用 `MemorySecrets`、`TENON_SECRETS=memory`，不碰钥匙串），一张 `satisfies Record<LogEvent['event'], …>` 的哨兵表，跨截断点的哨兵，OAuth 分片的哨兵，静态扫描（只有 `log/` 与 `mcp/log-sink.ts` 写 `logs/`；只有 `host/index.ts` new 钥匙串）。验收 3 那张表要有「事先就在内存钥匙串里、只经 `get` 读出」的哨兵、跨 300、500、2000 字截断点的哨兵、互为前缀的两个哨兵，三种写法要注入进去而不只是检查它们找不到。跑一遍确认是红的，单独提交一次只改测试的提交，在 log.md 记一行「测试作者提交：<提交号>」。
   - [ ] 2.3 实现者（另一个子 agent）：`log/redact.ts`、`log/app-log.ts`（格式、限量与来源表、轮转与抄写、文件保护、半行修补、内存缓存、运行标记）、`log/watch.ts` 的请求失败与界面报错；`host/sandbox.ts` 的「对不上命令的违规」接到 `sandbox-unattributed`。不削弱 2.2 的测试；非改不可时在 log.md 写「测试改动：文件 · 用例 · 为什么」。
   - [ ] 2.4 接线：`index.ts` 的转发器、各模块 `log ?? console.warn` 的回落、`readConfig` 的缺省 log 改成写日志，级别照 `LogLevel` 的含义；`main()` 一开始 `open`，之后注册 `will-quit`；`host/index.ts` 的 `HostSecrets` 包上 `rememberingSecrets`；`provider.ts` 的环境变量回落处登记；`.oxlintrc.json` 给 `apps/desktop/src/main/**` 禁 `console` 与 `process.stderr`，只放过 `log/`。`apps/desktop/test/profile.test.ts` 那条走 `console.warn` 的用例按需改，改了在 log.md 写「测试改动」一行（E2）。
   - [ ] 2.5 kernel：`loop/run.ts` 在尝试失败处加一行 `ctx.log`；`mcp/pool.ts` 加 `onSecret`（§对 03 的增补，D19）；desktop 的 `mcp/log-sink.ts` 以 0600 新建，启动时以不跟随链接的方式收紧已有文件。

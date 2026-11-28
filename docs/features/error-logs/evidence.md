@@ -21,10 +21,10 @@
 - 什么时候重核：开工前。
 
 ### E3 · 崩溃转储里有什么、Electron 怎么管
-- 结论：Crashpad 的设计文档说转储可能抓到崩溃进程内存里的任意内容（含用户 ID、密码），并把命令行、环境列为一般会带的进程状态。Electron 的 crashReporter 在 `uploadToServer: false` 时照样在本机写转储，启动后关不掉，没有删除或清理的 API，也不给文件路径；默认目录是 userData 下的 `Crashpad`。不调用 `crashReporter.start` 时磁盘上会不会仍有转储，没查实（P1）。
+- 结论：Crashpad 的设计文档说转储可能抓到崩溃进程内存里的任意内容（含用户 ID、密码），并把命令行、环境列为一般会带的进程状态。Electron 的 crashReporter 在 `uploadToServer: false` 时照样在本机写转储，启动后关不掉，没有删除或清理的 API，也不给文件路径；默认目录是 userData 下的 `Crashpad`。不调用 `crashReporter.start` 时磁盘上没有转储（P1 实测，三个平台，正对照成立）。
 - 一手来源：https://github.com/chromium/crashpad/blob/main/doc/overview_design.md ；https://github.com/electron/electron/blob/v44.4.1/docs/api/crash-reporter.md ；electron v44.4.1 的 `shell/common/electron_paths.cc`
 - 核查：确认（核实文件 03 的 C5–C10、C17、C21；C16 更正为 `getUploadedReports` 也列出本地未上传的报告）。
-- 什么时候重核：升 Electron 大版本时；P1 跑完时。
+- 什么时候重核：升 Electron 大版本时。
 
 ### E4 · Electron 的进程事件与主进程异常的默认处理
 - 结论：`app` 的 `render-process-gone` 给 `(event, webContents, details)`，`details` 有 `reason`、`exitCode`；`child-process-gone` 给 `(event, details)`，有 `type`、`reason`、`exitCode`、`serviceName`、`name`，不含渲染进程，也管不到 Node `child_process` 起的子进程。Electron 主进程自己占一个 `uncaughtException` 监听：没有别的监听时弹「A JavaScript error occurred in the main process」框、不退出；你一注册监听，这个默认处理整个跳过。Node 的 `uncaughtExceptionMonitor` 只观察、不改默认行为。主进程被 SIGKILL、OOM、断电或原生崩溃时 JS 不会跑。

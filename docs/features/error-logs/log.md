@@ -70,3 +70,22 @@
 
 - 2026-11-28 · owner 读「给你看的一页」约 5 分钟（owner 自述）；批 ready 前问了 1 个问题（要不要用日志库）。
 - ready 之后的修订条数、走查时「这不是我以为的」次数：做到那一步再记。
+
+## 评审 · 2026-11-28 · 审过 0b3707e
+
+- 范围：PR #98 能不能合进 dev（两份 spec 的文档；设计不重审）。新上下文，Opus，只读。原文在私有笔记（另记）。
+- 结论：改完再合。1 blocker、1 major、8 minor、4 建议。
+- 处置：
+  - B1（入口页与最新 dev 冲突）：已改，合入最新 dev 后重新生成。
+  - M1（两份 plan 的进度过期）：已改。
+  - m1（packaging 1.1 的总参考一行没加）：已加。m2（D18 把卡面写成 owner 点名）：改成照实写。m3（引号里的话不是 owner 原话）：去掉引号。m4（一页没写 60 行上限的两处例外）：补上，记修订。m5（`open -a` 与 `open -n -a` 不一）：统一成 `open -n -a`。m6（几条证据没跟上探针结果）：已更新。m7（「启动是第一行」）：两份 spec 都澄清，error-logs 记修订。m8（验收 17 的 SIGTERM 一支在段二）：分段表里写明。
+  - 建议「三轮挑刺评审的标题没绑提交号、第三轮处置没人复核」：段一评审时抽查。其余两条建议知悉，不改。
+- 没发现问题的：owner 批准记录、公开仓库边界、03/04 只改页头、没有行号引用、plan 尾部。
+
+## 实施 · 段一
+
+- 测试作者提交：3e36885（2026-11-28；新子 agent，只读 spec、evidence、plan，没看实现）。
+- 现在就绿的两条：`error-logs-static.test.ts` 的两条静态扫描（今天只有 `mcp/log-sink.ts` 写 `logs/`、只有 `host/index.ts` new 钥匙串）；测试作者先对造出来的违规文件列表确认扫描会报错。它们守的是以后不退步。
+- 测试改动：apps/desktop/test/error-logs-watch.test.ts、apps/desktop/e2e/error-logs.spec.ts · error-logs 验收 14 · 收紧：`repeats` 原先放宽成「0 或 1」「2 或 3」，spec 澄清为第一条 1、补写行是总次数后改成精确值（lead 改，实现之前）。
+- 测试作者指出 spec 说不清的十处：七处已澄清进 spec（修订记录 2026-11-28）；其余三处照测试的理解不改 spec：MCP 日志收紧的入口时机、多行密钥按整段登记、`ErrorSummary` 的 cause 只保证 message 不进。
+- 留给实现者：`test/support/error-logs.ts` 的 5 行与 `pool-on-secret.test.ts` 的 1 行 `@ts-expect-error` 在模块出现后删掉（只删这 6 行不算削弱）。

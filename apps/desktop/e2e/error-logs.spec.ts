@@ -148,9 +148,9 @@ test('error-logs 验收 14: an uncaught renderer error logs its first line, file
   // Only the file's name, no query, no folder; and a line number.
   expect(String(first?.['source'])).not.toMatch(/[/?#]/u)
   expect(Number.isInteger(first?.['line'])).toBe(true)
-  // (The spec does not say whether a line counts itself: 1 or 0 for the first, 2 more or 3 in all after.)
-  expect([0, 1]).toContain(first?.['repeats'])
-  expect([2, 3]).toContain(count?.['repeats'])
+  // The first line counts itself; the follow-up line carries the total of the run.
+  expect(first?.['repeats']).toBe(1)
+  expect(count?.['repeats']).toBe(3)
   expect(records('E2E_RENDERER_OTHER')[0]).toMatchObject({ level: 'error' })
   const text = JSON.stringify(appLogRecords(userData))
   for (const quiet of ['E2E_LOG_NOT_LOGGED', 'E2E_INFO_NOT_LOGGED', 'E2E_WARN_NOT_LOGGED']) {

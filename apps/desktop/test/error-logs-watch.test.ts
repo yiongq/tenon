@@ -182,18 +182,18 @@ it('error-logs 验收 14: an uncaught renderer error logs its first line, file a
   expect(cutSource.length).toBeLessThanOrEqual(216)
 
   // The same error again and again: the first is written at once, the rest are counted, and the
-  // count is written when something else comes. (3 of them: the line says 2 more, or 3 in all.)
+  // count is written when something else comes. (3 of them: the count line says 3.)
   const same = { level: 'error', message: 'Uncaught Error: loop', sourceId: BUNDLE, lineNumber: 9 }
   renderer.emit(same)
   renderer.emit(same)
   renderer.emit(same)
   const loops = () => logged().filter((r) => r['message'] === 'Uncaught Error: loop')
   expect(loops()).toHaveLength(1)
-  // (The spec does not say whether the first line counts itself: 1 or 0.)
-  expect([0, 1]).toContain(loops()[0]?.['repeats'])
+  // The first line counts itself; the follow-up line carries the total of the run.
+  expect(loops()[0]?.['repeats']).toBe(1)
   renderer.emit({ ...same, message: 'Uncaught Error: another' })
   expect(loops()).toHaveLength(2)
-  expect([2, 3]).toContain(loops()[1]?.['repeats'])
+  expect(loops()[1]?.['repeats']).toBe(3)
   const order = logged().map((r) => r['message'])
   expect(order.slice(-3)).toEqual([
     'Uncaught Error: loop',
@@ -207,6 +207,6 @@ it('error-logs 验收 14: an uncaught renderer error logs its first line, file a
   log.close()
   const anothers = logged().filter((r) => r['message'] === 'Uncaught Error: another')
   expect(anothers).toHaveLength(2)
-  expect([2, 3]).toContain(anothers[1]?.['repeats'])
+  expect(anothers[1]?.['repeats']).toBe(3)
   expect(readRecords(join(dir, 'main.jsonl')).at(-1)?.event).toBe('app.quit')
 })

@@ -49,3 +49,14 @@ overview：不用改。它只在模块表里泛写 renderer 有「工具行与�
 发现：
 - [major] 验收 3 取错轮的 canRestore 能存活（N6、N8、N9） · 证据：在 237e540 上重新打 N6（callSnapshot 改取 rounds.at(-1)!.canRestore）、N8（ToolRow 改传 saved !== null && rounds.data?.rounds.at(-1)?.canRestore === true）、N9（改传 saved !== null && rounds.data?.rounds.some((r) => r.canRestore) === true），各自都是 1 failed | 42 passed，红在 renderer-tool-row.test.ts「command-undo-copy 验收 3」；新用例把 round-2 放在 round-1 前或后、canRestore 与本轮相反，共四种组合，同时挡住取最前轮、取最后轮、any、all（M1–M5 也都红）；修复只改测试，没有新增状态、机制、接口、表或配置项 · 已修 237e540
 - [major] decisions.md 把 owner 批 ready 时的「5 项」改成「6 项」 · 证据：git show ec4769d:docs/features/command-undo-copy/decisions.md 有 5 条「- 自定」、原话注记写「5 项」；237e540 的注记已改回「5 项」，批 ready 之后改写的工具行那条与新增的「任务文件夹里」那条各标「批 ready 之后改／加，owner 还没看过」；与 spec.md「要你定的」里「6 项（评审之后改了一项、加了一项）」一致 · 已修 237e540
+
+## 验收 · 2026-11-28（第 6 步，验收 5）
+
+dev `23d121e`（#95 合入），macOS，独立 userData（只抄 provider 配置），任务文件夹在 scratchpad 下（不在「文稿」「桌面」），真模型智谱 glm-5.3。owner 说「合入后起」后由 Claude 用 computer use 驱动。
+
+- 手动档 `touch made-by-cmd.txt` 的命令卡：④ 是「它在任务文件夹里改的文件一般能随这一轮还原；文件夹外的、联网发出的、.git 里的和被排除的文件撤不回。」，钮「拒绝 Esc」「允许（本会话）」· 通过
+- 允许后展开这一行：「运行了这条命令 · 它在任务文件夹里改的文件能随这一轮还原；…撤不回。」，同一轮结算行「可还原（不含被排除的文件）」· 一致
+- 自动档 `touch auto-made.txt`：不出卡；展开行有「为什么没问 · 自动档放行」、快照号，后果句是「能随这一轮还原」那句；同一轮结算行「可还原（不含被排除的文件）」· 通过
+- 加做：点这一轮「可还原」，预览只列「将删除 1 个新建文件 auto-made.txt」，确认后文件没了，上一轮的 `made-by-cmd.txt` 还在。新句许的事兑现了。
+- 观察（不属验收 5，也不是本 spec 改坏的）：还原之后那一轮 `canRestore` 变假，结算行去掉「可还原」，展开行按 spec 退回旧句「如果它改了东西，Tenon 没法替你撤回。」。两行不打架，但刚还原完读到「没法替你撤回」有点怪；改之前这里一直是这句。要不要另做「已还原」的说法，交 owner 定。
+- 过程：Tenon 窗口在 owner 的全屏 Space 外，后台点不到，选文件夹和对话都用了全屏控制（owner 批）。第一次开选择框时它以 Downloads 提交了，授权框点了「取消」，没加进去。截图在私有笔记 acceptance-2026-11-28/command-undo-copy/。
