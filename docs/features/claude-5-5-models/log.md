@@ -225,3 +225,15 @@
 - 观察：压缩后的主请求缓存读为 0、重写 5 千多 token，是摘要替换了历史前缀，符合预期。
 
 测试改动：apps/desktop/e2e/live-official-agent.spec.ts · official Claude 5.5 rows（三例） · 新 describe 照文件里已有的付费套件加 `test.skip(!ENABLED)`：只有 `TENON_LIVE=1` 且 `TENON_LIVE_OFFICIAL_AGENT=1` 时跑，默认 e2e 与 CI 不收要官方 key、要花钱的用例；不是放宽已有断言
+
+## 评审 · 2026-11-28 · 审过 27826c9
+结论：不通过    评审：派发会话起的独立子 agent，Opus 5.5，新上下文；读评审包、tenon-notes/2026-11-28-c55-live 下四份线上记录、plan 第 12 步与「命令」，在 27826c9 的临时 worktree 里读被测 helper 与 kernel 代码并做突变；没跑 live、没读钥匙串
+突变：出了 24 个（记录回放 21 个：M1–M19，其中 M4、M13 各两份；生产代码 3 个：CM1、CM2、CM5，跑 vitest），首跑存活 9 个（M9、M10、M11、M12、M13×2、M15、M19、CM2）；M11、M12 的一般形式与 M13 的产品侧（CM5）被现有 CI 用例拦住，M19 不受验收约束、算等价；M9 与 CM2 是同一处，和 M10、M13/M15 记为下面三条建议；把突变放到真厂商上跑需付费 live，未跑
+发现：
+- [blocker] spec.md §修订记录 与 docs/reference/vendors.md §修订 新加的两行，出处写成分支名 `feat/claude-5-5-live` · 证据：docs/spec-driven-dev.md §4. 改动两条路「…相关的提交号或 PR 号。同一个提交写不进自己的提交号，所以写已有的相关提交或 `PR #n`」，同文件「现行文档」一节格式相同；违反处是这两行的行末 · 待作者处置
+- [建议] Sonnet 压缩例只从 Tape 读压缩后主请求的 low，线上 `official[1]` 的 `output_config` 没断言 · 证据：存活突变 CM2（anthropic-messages.ts encode 对带 dropThinkingBefore、思考没关的请求不写 output_config），kernel 2805 例全绿、desktop/contracts 只红基线上同样红的 6 例；记录回放 M9 存活 · 不修：只算建议
+- [建议] Sonnet 例没断言摘要前一个请求是 low（重启前 evidence 的结果被丢掉，CI 对应用例查了 attempts[at - 1]） · 证据：记录回放 M10 存活；本次记录 wire[2]、wire[3] 是 low，摘要请求缓存读 0、回放历史里没有思考块，不影响结论 · 不修：只算建议
+- [建议] 思考文本断言在没有思考块时空过，可加「reasoningTokens > 0 的 attempt 消息里有思考块」 · 证据：记录回放 M13、M15 存活；产品侧突变 CM5 被 CI 拦（24 例红） · 不修：只算建议
+- [建议] 缓存例把两个模型放在一个用例的循环里，Sonnet 一失败，Haiku 不跑，和 describe 注释不符 · 无证据 · 不修：只算建议
+- [建议] save() 在用例函数体里写的 info.status 恒为 passed，记录里的 status 不能当通过的证据（已有代码） · 无证据 · 不修：只算建议
+- [建议] 验收 12 第一点（官方组两行各跑一次）没有原始线上记录，vendors.md「官方组 3 例…全部 200」核不了 · 无证据 · 不修：只算建议
