@@ -248,7 +248,7 @@
 结论：通过    评审：复审，派发会话起的独立子 agent，Opus 5.5，新上下文，没看作者对话；读 log.md「评审 · 2026-11-28 · 审过 27826c9」与「评审处置」两节、`git diff 27826c9 a5356d1` 及逐提交 stat、`gh pr view 97`、docs/spec-driven-dev.md §4 与 §8、sdd references/review.md、spec 验收 12、plan「Open」与第 15 步、apps/desktop/e2e/live-official-agent.spec.ts 的 `save()` 与 Claude 5.5 describe；跑了 spec-check（4 条拦都来自最后一条记录仍是审过 27826c9 的那条）；没跑 live、没读钥匙串或 .env
 突变：本次修复只改了 spec.md、vendors.md 各一行修订和 log.md，没改测试或生产代码，突变不适用
 发现：
-- [blocker] spec.md §修订记录 与 docs/reference/vendors.md §修订 新加的两行，出处写成分支名 `feat/claude-5-5-live` · 证据：docs/spec-driven-dev.md §4. 改动两条路「…相关的提交号或 PR 号。同一个提交写不进自己的提交号，所以写已有的相关提交或 `PR #n`」；违反处是这两行的行末 · 已修 d29ec38，已复审：两行行末现为 `PR #97`，`gh pr view 97` 的 headRefName 是 `feat/claude-5-5-live`、base `dev`、OPEN；spec.md 那行与同节 `· PR #70` 同式，vendors.md 那行按「日期 · 改了什么 · 为什么 · 提交号或 PR 号」四段写
+- [blocker] spec.md §修订记录 与 docs/reference/vendors.md §修订 新加的两行，出处写成分支名 `feat/claude-5-5-live` · 证据：docs/spec-driven-dev.md §4. 改动两条路「…相关的提交号或 PR 号。同一个提交写不进自己的提交号，所以写已有的相关提交或 `PR #n`」；违反处是这两行的行末 · 已修 d29ec38，已复审：两行行末现为 `PR #97`，`gh pr view 97` 的 headRefName 是 `feat/claude-5-5-live`、base `dev`、OPEN；spec.md 那行与同节以 `PR #70` 结尾的行同式，vendors.md 那行按「日期、改了什么、为什么、提交号或 PR 号」四段写
 - [建议] Sonnet 压缩例只从 Tape 读压缩后主请求的 low，线上 `official[1]` 的 `output_config` 没断言 · 证据：存活突变 CM2；记录回放 M9 存活 · 不修：断言照验收 12 的写法（快照从 Tape 读）；补断言要再付费跑一次 live 才能确认，留给以后改这几例时一并做（复审核过：验收 12 第二点线上只要求摘要请求，压缩后主请求的 low 写明从 Tape 读，理由属实）
 - [建议] Sonnet 例没断言摘要前一个请求是 low · 证据：记录回放 M10 存活 · 不修：同上（复审核过：验收 12 把「选成 low」写成前置操作，没要求断言摘要前的请求，理由属实）
 - [建议] 思考文本断言在没有思考块时空过 · 证据：记录回放 M13、M15 存活；产品侧突变 CM5 被 CI 拦 · 不修：同上（复审核过：验收 12 第四点原文「回复里出现思考块时文本非空…不要求一定有思考块」，理由属实）
@@ -256,3 +256,7 @@
 - [建议] save() 在用例函数体里写的 info.status 恒为 passed，记录里的 status 不能当通过的证据（已有代码） · 无证据 · 不修：只算建议
 - [建议] 验收 12 第一点（官方组两行各跑一次）没有原始线上记录，vendors.md「官方组 3 例…全部 200」核不了 · 无证据 · 不修：只算建议
 - [建议] 上面三条带证据的「不修」没进「以后再说」，也没进 plan「Open」，只在 log.md；plan 第 15 步只把「上线后跟进」与 Open 挪进「以后再说」，到时会漏 · 证据：docs/spec-driven-dev.md §8「默认不修，处置写 `不修：<理由>`，记进「以后再说」」；`git diff 27826c9 a5356d1` 没动 docs/architecture/master-reference.md 与 plan.md，plan「## Open」为「（无…）」 · 待作者处置
+
+## 评审处置 · 2026-11-28（审过 a5356d1 那一轮）
+
+- [建议] 三条带证据的「不修」没进「以后再说」 · 已修（本条所在提交）：总参考「以后再说」加一行，列出三处可收紧的断言与要付费重跑这一前提。
