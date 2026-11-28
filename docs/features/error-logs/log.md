@@ -97,3 +97,5 @@
 - 修复者提交：2cab2ec、698f3f0、2f863e0、b9bbff0（2026-11-28；另一个新子 agent）。
 - 探针（plan 2.0）：第一轮（run 46122329302）探针自己加载太早没测到；修好后第二轮（run 46126942154，Linux）：有、没有空的 `unhandledRejection` 监听，退出码都是 0；没监听时 stderr 有两行 `UnhandledPromiseRejectionWarning`，有监听时没有。走「照现稿」那一支，spec 开放问题 1 关掉。
 - 复审（审 f5a1784，原文另记）：不通过，1 blocker、1 major、6 minor、6 建议；上一轮的 major 都已修对。blocker 是「ready 之后四项新增机制没有 owner 点名」，已补问，owner 四项都定了（D21–D24）；其余交下一轮修复。这是第二轮，按细则 8 再有一轮就停。
+- 测试改动：apps/desktop/test/error-logs-registry.test.ts · 文件头与「the table holds 10 000 values…」的用例名、一句注释 · spec 改了（D21，丢最久没用的）：原先的「丢最早登记的」「重复登记不改先后」改成「丢最久没被读到的」「重复登记排到最新」，只改了措辞；该用例的断言原样保留（新规则下仍成立），「重复登记排到最新」另加两条新用例。
+- 测试改动：scripts/lint-gate.test.mjs · 「still bans reading main's cwd outside dev-env.ts」 · 收紧（复审 m3）：dev-env.ts 也不能从 node:process 取 stderr、stdout、默认导出，也不能经 globalThis 写终端。原先断言它的 no-restricted-imports 是 `off`、no-restricted-properties 只有 process.stderr 与 process.stdout；改成断言前者是 error、只禁那三个名字（cwd 仍放开），后者再多 globalThis.console 与 globalThis.process 两项。
