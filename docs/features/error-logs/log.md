@@ -95,3 +95,5 @@
 - 评审后补测试提交：3720511（2026-11-28；又一个新子 agent，只写测试）。14 条复现（12 条先红）、23 个突变缺口逐个验证能杀。
 - 测试改动：apps/desktop/test/error-logs-app-log.test.ts · error-logs 验收 2、16 · 收紧：把「保留数小于总数」「长度不超过上限」这类宽松断言换成精确值（留下的是第 0–999 条、丢弃计数 49000、换窗口时的 `log.dropped` 在 close 之前就在），一条精确断言顶替了几条宽松的，所以删的条数比加的多。
 - 修复者提交：2cab2ec、698f3f0、2f863e0、b9bbff0（2026-11-28；另一个新子 agent）。
+- 探针（plan 2.0）：第一轮（run 46122329302）探针自己加载太早没测到；修好后第二轮（run 46126942154，Linux）：有、没有空的 `unhandledRejection` 监听，退出码都是 0；没监听时 stderr 有两行 `UnhandledPromiseRejectionWarning`，有监听时没有。走「照现稿」那一支，spec 开放问题 1 关掉。
+- 复审（审 f5a1784，原文另记）：不通过，1 blocker、1 major、6 minor、6 建议；上一轮的 major 都已修对。blocker 是「ready 之后四项新增机制没有 owner 点名」，已补问，owner 四项都定了（D21–D24）；其余交下一轮修复。这是第二轮，按细则 8 再有一轮就停。
