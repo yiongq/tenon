@@ -351,6 +351,11 @@
             "object": "process",
             "property": "stderr",
             "message": "main's lines go through appLog (apps/desktop/src/main/log); only log/ writes to stderr."
+          },
+          {
+            "object": "process",
+            "property": "stdout",
+            "message": "main's lines go through appLog (apps/desktop/src/main/log); only log/ writes to stdout."
           }
         ],
         // The same read through a named import. `globalThis.process.cwd()` and a default or namespace
@@ -393,7 +398,20 @@
       // loadDevEnv runs before app.whenReady(), so before the sandbox's chdir (spec 04 读法 50).
       "files": ["apps/desktop/src/main/dev-env.ts"],
       "rules": {
-        "no-restricted-properties": "off",
+        // Only the cwd is let go here; the rule about stderr and stdout stands for this file too.
+        "no-restricted-properties": [
+          "error",
+          {
+            "object": "process",
+            "property": "stderr",
+            "message": "main's lines go through appLog (apps/desktop/src/main/log); only log/ writes to stderr."
+          },
+          {
+            "object": "process",
+            "property": "stdout",
+            "message": "main's lines go through appLog (apps/desktop/src/main/log); only log/ writes to stdout."
+          }
+        ],
         "no-restricted-imports": "off"
       }
     },

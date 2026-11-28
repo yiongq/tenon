@@ -339,11 +339,17 @@ describe('the effective .oxlintrc.json config', () => {
     // Catches: dropping the apps/desktop/src/main override or either of its rules. No main file
     // reads the cwd today, so `pnpm lint` itself stays green without it.
     expect(MAIN_PATHS.flatMap((path) => cwdBanGaps(path))).toEqual([])
+    // dev-env.ts is let go of the cwd ban and of nothing else: it may not write to stderr or stdout
+    // either (error-logs §一直要成立的规矩 第 1 条 names no exception).
     const devEnv = effectiveConfig('apps/desktop/src/main/dev-env.ts').rules
-    expect({
-      properties: devEnv['no-restricted-properties'],
-      imports: devEnv['no-restricted-imports'],
-    }).toEqual({ properties: 'off', imports: 'off' })
+    const devEnvProperties = devEnv['no-restricted-properties']
+    expect(Array.isArray(devEnvProperties) ? devEnvProperties[0] : devEnvProperties).toBe('error')
+    expect(
+      entriesOf(devEnvProperties)
+        .map((one) => `${one.object}.${one.property}`)
+        .toSorted(),
+    ).toEqual(['process.stderr', 'process.stdout'])
+    expect(devEnv['no-restricted-imports']).toBe('off')
   })
 })
 
