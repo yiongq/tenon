@@ -2,7 +2,7 @@
 
 ## 当前 / 需要你
 
-当前：ready，段一已合入 dev（PR #101，086d0b8）；段二在 `feat/error-logs-seg2`，第 3.0–3.2.2 步做完（测试作者提交 063cc60，含走查的端到端用例与报告生成），下一步 3.3（实现者）。段二的提交都还没推送，攒到实现交回后一起推。
+当前：ready，段一已合入 dev；段二在 `feat/error-logs-seg2`：第 3.0–3.4 步做完（测试 063cc60、实现 ee6be10、文档同步），格式、lint、类型检查绿，相关 178 条用例绿；e2e 与走查报告等 CI。下一步 3.5（评审）与 3.6（owner 读走查报告）。
 需要你：定流程优化的那份建议稿（私有笔记里的汇总）要不要先在段二试。
 
 ## 分段
@@ -36,8 +36,8 @@
   - [x] 3.2 测试作者按本段的验收写测试：`child-process-gone` 用假的 EventEmitter，文件头写明它复现了真依赖的哪几条行为；验收 9 用 Playwright 在主进程里替换 `dialog.showErrorBox` 再抛错；验收 11 用假的 dialog、exit 断言顺序，e2e 把 `<profileDir>/mcp` 换成同名文件、直接 spawn、等 `app.startup-failed` 再 SIGKILL；验收 15 先跑正对照；验收 17 的 SIGTERM 在 e2e 里走「srt 还没装监听」那一支，登记之后的那一支由 `registerSandboxSignals` 的单元测试守。跑红、单独提交、log.md 记「测试作者提交」。
   - [x] 3.2.1 走查的端到端用例（owner 2026-11-28「做，段二一起」）：Playwright 起真应用（内存钥匙串、假的模型服务返回 401、不读开发环境的 key），在设置界面里存一把假 key，从输入框发一条消息，断言日志里有那次失败、没有 key、没有消息内容；进 CI 的 e2e。
   - [x] 3.2.2 走查报告：同一组 e2e 跑完后生成一页报告（每个场景：截图、日志原始的一行、整理后的样子、逐条检查的 ✓/✗），作为 CI 产物；段一的四个场景与段二的场景都在里面，崩溃与启动失败的提示框用截图。原始的一行放在整理的样子前面。
-  - [ ] 3.3 实现者：`watchProcessExits`、`watchUncaught`、`reportStartupFailure`、`openLogsFolder`、菜单。文案进 `apps/desktop/src/i18n/locales/{en,zh-CN}`，过 `pnpm i18n:check` 与 `copy:check`。`menu-template.test.ts` 里开发构建那条（`help.learnMore` 一项）与打包构建那条（没有 Help）、`menu.test.ts` 的对应断言都要改，各在 log.md 写「测试改动」一行。验收 8、9、14、15 照 P1–P3 的结果写好了，不再改。
-  - [ ] 3.4 文档同步：`SECURITY.md` 加日志一段；overview 的模块一行与 §信任边界 的「密钥」一句；`docs/ux/components.md` 的「应用菜单」与它的「## 修订」一行。
+  - [x] 3.3 实现者：`watchProcessExits`、`watchUncaught`、`reportStartupFailure`、`openLogsFolder`、菜单。文案进 `apps/desktop/src/i18n/locales/{en,zh-CN}`，过 `pnpm i18n:check` 与 `copy:check`。`menu-template.test.ts` 里开发构建那条（`help.learnMore` 一项）与打包构建那条（没有 Help）、`menu.test.ts` 的对应断言都要改，各在 log.md 写「测试改动」一行。验收 8、9、14、15 照 P1–P3 的结果写好了，不再改。
+  - [x] 3.4 文档同步：`SECURITY.md` 加日志一段；overview 的模块一行与 §信任边界 的「密钥」一句；`docs/ux/components.md` 的「应用菜单」与它的「## 修订」一行。
   - [ ] 3.5 段二收尾：同 2.6。
   - [ ] 3.6 段二走查：owner 不动手，读 3.2.2 的报告（CI 产物，lead 取下来给 owner），每条明确回答对或不对，记进 log.md；段一没看到的场景四（连接器日志只有本人能读）与「开发启动方式下 `ver` 是 Tenon 的版本」也在报告里。只有报告替代不了的才请 owner 亲手做：「帮助 → 打开日志文件夹」点一下（验收 19）。真弹框会不会卡住窗口由 e2e 的截图与用例看，看不出来的写明。
 - [ ] 4. 「以后再说」登记下面这些，每条一行；「渲染层没有错误边界……」那一条原样留着、不动：

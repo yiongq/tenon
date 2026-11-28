@@ -117,7 +117,7 @@ export function rememberingSecrets(secrets: HostSecrets, log: Pick<AppLog, 'reme
 
 // log/watch.ts
 export function logRouteFailures(ipc: IpcMainLike, log: AppLog): IpcMainLike
-export function watchProcessExits(app: { on(event: 'render-process-gone' | 'child-process-gone', listener: (...args: never[]) => void): unknown }, log: AppLog): void
+export function watchProcessExits(app: { on(event: 'render-process-gone', listener: (...args: unknown[]) => void): unknown; on(event: 'child-process-gone', listener: (...args: unknown[]) => void): unknown }, log: AppLog): void
 export function watchUncaught(proc: {
   on(event: 'uncaughtExceptionMonitor', listener: (error: Error, origin: string) => void): unknown
   on(event: 'unhandledRejection', listener: (reason: unknown, promise: Promise<unknown>) => void): unknown
@@ -316,3 +316,4 @@ export interface McpPoolOptions { /* 已有成员不动 */ readonly onSecret?: (
 - 2026-11-28 · §日志怎么写、§已知限制与代价、给你看的一页 · owner 点名（D26）：「最坏形状 200 毫秒以内」做不到，改成实测的数并写进已知限制；卡数改成 18 · PR #101
 - 2026-11-28 · §日志怎么写 · 补记 32ebb8f 没记的三处措辞改动（为压字数）：登记表那条删掉「查找的耗时不随…变坏」、「开头 8 个字符都相同」写成「开头相同」；D25 那条的耗时句改写；抄写那条删掉括号里的理由 · PR #101
 - 2026-11-28 · §日志怎么写「登记表」 · 澄清：「仍在毫秒级」改成实测的「50 毫秒以内」（段一最后核对的建议） · 段二的 PR
+- 2026-11-28 · §接口 `watchProcessExits` · 澄清：参数类型按两个事件各写一个重载（原写法 Electron 的 `app` 和测试用的 EventEmitter 都过不了类型检查），行为不变 · 段二的 PR
