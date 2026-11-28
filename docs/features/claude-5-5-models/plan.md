@@ -4,8 +4,8 @@
 
 ## 当前 / 需要你
 
-当前：第 0.1、1–13 步做完（第 12 步官方 key live 冒烟全过；第 13 步页头成对，分支 `docs/claude-5-5-pairs`）。下一步第 14 步：对照验收 1–19 逐条核对，全量 e2e 走 CI。
-需要你：无
+当前：第 0.1、1–13 步做完（第 12 步官方 key live 冒烟全过；第 13 步页头成对，PR #99，评审见 log）。下一步第 14 步：对照验收 1–19 逐条核对，全量 e2e 走 CI。
+需要你：合 PR #100（删 `.sdd/config.json` 里本 spec 三条已失效的 pairs 已知项）。规则原文：plan 第 13 步「若报 config 里这份 spec 的已知项失效，删它们要改 `.sdd/config.json`（门禁文件），那一处交 owner 合」。顺序：先等 #97、#99 合入再合 #100，先合会让 dev 上 pairs 拦 3 条。改的代价：合一个只删 15 行的门禁文件 PR；不改的代价：这三条留着，以后有人删掉 01、02 那两行 `Changed by`，spec-check 不会拦（#99 评审突变 M1b、M1c 存活）。
 授权：本 spec 由 Codex 实现的 PR，lead 评审、CI 绿后由 lead 开自动合并；碰门禁文件、涉及花费或安全取舍、改 Status 时仍问 owner · 到本 spec `implemented` 为止 · 「一路推进 (Recommended)」（2026-10-23 问卷，题目「Codex 的 PR 经我评审、CI 绿了之后，我自己开自动合并，还是每个都先问你？」）
 
 ## 开工前读
@@ -129,7 +129,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
   - 任一摘要请求 400：停下，不改代码，spec 回 `draft`，把报错原文（不含 key）记进 log.md。报错指向 effort、`between_tools` 或 `disabled` 时，按 spec §已有规则「逐条 effort」的退路请 owner 定（§点名 (e)）。指向别的原因时不按 (e) 处理：这两例的摘要请求第一次回放 tool_use / tool_result 又不带 tools，记成 02 §摘要请求「前缀（默认做法）」的问题请 owner 定。原因判不清时，问 owner 要不要在 record 模式下给 Opus 5.5 跑一次同样的「Read + 阈值压缩」做对照（约 7 个请求，同样先提醒钥匙串会弹窗）。
   - 记进 log.md：模型、日期、各请求的状态码与用量、摘要请求的 `thinking` 与 effort、思考文本是否非空、第二个请求的缓存读，另记一行「花费：」。不记 key。实测结果回写 docs/reference/vendors.md 对应行的「实测结果」与核实日期。
   - 开跑前请 owner 确认花费上限（建议 2 美元，约为估计的两倍）并写进 spec 修订记录；累计到上限就停，问 owner。
-- [x] 13. 页头成对（2026-11-28 做完：本 spec 改成一行 `Changes:`，01、02、model-display-names 各加一行 `Changed by`；spec-check 的 pairs 拦 0 条，config 里本 spec 的三条 pairs 已知项不再触发，没有报失效，`.sdd/config.json` 不用改）（与实现同一个 PR；旧 spec 正文一字不改，也不加行末指针，ADR-004 A5）：
+- [x] 13. 页头成对（2026-11-28 做完：本 spec 的 `Amends:`、`Replaces:` 改写成四行 `Changes:`（按目标分行，单行不超 600 字），01、02、model-display-names 各加一行 `Changed by`；pairs 拦 0 条。config 里本 spec 的三条 pairs 已知项随之失效（spec-check 不报失效，但会盖住以后弄坏的成对），删它们的提交在 PR #100，门禁文件交 owner 合）（与实现同一个 PR；旧 spec 正文一字不改，也不加行末指针，ADR-004 A5）：
   - 本 spec 页头：`Amends:` 改写成 v2 的 `Changes:`，每条只带一个 §（spec-check 每个目标只取第一个 §），多条用「；」隔开，例如 `[02-agent-loop](../../architecture/02-agent-loop/spec.md) §主进程与 kernel 的循环接口（增补：`resolveChoice` 的问询只增 `previousModel`）`；带 §点名 项的条目（(a)(b)(f)(g) 落到的节）不标「增补」，括注写点名与 owner 的确认；`Replaces:` 改写成 `Changes: 02 §模型菜单与输入框（替换：「更多模型 ›」的括注）`。改写只换格式，指到的节与内容不变，记一行修订。
   - 01、02、model-display-names 页头为本 spec 的每条 `Changes` 各写一条 `Changed by: claude-5-5-models（§<节名>）`，逐条成对；02 那几条的括注点出 §点名 (a)(b)(f)(g) 与 owner 的确认（(g) 是 owner 2026-10-15 经问卷确认，spec `Revisions:` ㊴；(e) 只在 live 失败、owner 确认时补）；01 那条点出 (f)（验收 6 的读法）。custom-vendors 与 presentation-r1 不加（spec `Revisions:` ㉘、㉛，`Related:`）。
   - 跑 `python3 .sdd/spec-check.py`：pairs 拦 0 条。若报 config 里这份 spec 的已知项失效，删它们要改 `.sdd/config.json`（门禁文件），那一处交 owner 合。
@@ -145,7 +145,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 
 ## 交接
 
-- 2026-11-28：第 12、13 步做完。第 13 步只改页头格式（修订记录一行），spec-check 的 pairs 拦 0 条。下一步第 14 步：逐条核对验收 1–19、跑 spec-check 确认 trace、全量 e2e 走 CI 草稿 PR；第 15 步清理后派评审。
+- 2026-11-28：第 12、13 步做完。第 12 步是 PR #97（评审两轮，审过 a5356d1 通过，自动合并已开）；第 13 步是 PR #99（叠在 #97 上，评审见 log），删失效已知项的门禁文件改动另在 PR #100，由 owner 在 #97、#99 之后合。下一步第 14 步：逐条核对验收 1–19、跑 spec-check 确认 trace、全量 e2e 走 CI 草稿 PR；第 15 步清理后派评审。
 
 ## Open
 
