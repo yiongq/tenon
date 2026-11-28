@@ -4,11 +4,13 @@
  * longest time let go when one more comes (D21), a value registered again taking no new place and
  * moving to the newest. Registering costs what the value is long, and so does looking for them in a
  * string: the spellings sit in a prefix tree, so what a lookup costs does not depend on how many
- * registered values begin alike, and no list of them is scanned.
+ * registered values begin alike, and no list of them is scanned. A value longer than what
+ * redaction looks at in one string (`REDACT_INPUT_LIMIT`) is not registered, nor is a spelling of
+ * one that is: it could never be found.
  *
  * No electron import.
  */
-import { MIN_SECRET_LENGTH, REDACTED, secretSpellings } from './redact.js'
+import { MIN_SECRET_LENGTH, REDACT_INPUT_LIMIT, REDACTED, secretSpellings } from './redact.js'
 
 /** The most values the table holds. */
 export const MAX_SECRETS = 10_000
@@ -17,18 +19,20 @@ export const MAX_SECRETS = 10_000
 const CUT_MARK = /…(?:\(\+\d+\))?$/u
 
 export interface SecretRegistry {
-  /** Registers a value (one under 8 characters changes nothing); one already there becomes the newest. */
+  /**
+   * Registers a value (one under 8 characters or over 16 384 changes nothing); one already there
+   * becomes the newest.
+   */
   add(secret: string): void
   /**
-   * `text` with every spelling of every registered value replaced. At a place where several begin,
-   * the longest wins; matches that overlap one another are one replacement.
+   * `text` with every spelling of every registered value replaced, and the end of it too when it
+   * is the start (8 or more characters) of a registered value as written, with the cut mark after
+   * it kept: what an upstream cut leaves of a secret. At a place where several begin, the longest
+   * wins; matches that overlap one another, the end among them, are one replacement. The end is
+   * looked for in the text as it was, so a value found inside it does not hide the rest of the one
+   * it began.
    */
   replace(text: string): string
-  /**
-   * `text` when it ends with the start (8 or more characters) of a registered value, as written:
-   * that tail replaced and the cut mark after it kept. What an upstream cut leaves of a secret.
-   */
-  cutTail(text: string): string
 }
 
 /** A branch of the tree: the characters along it, and the node they lead to. */
@@ -171,6 +175,7 @@ export function createSecretRegistry(): SecretRegistry {
 
   const add = (secret: string): void => {
     if (typeof secret !== 'string' || secret.length < MIN_SECRET_LENGTH) return
+    if (secret.length > REDACT_INPUT_LIMIT) return
     const known = values.get(secret)
     if (known !== undefined) {
       // Registered again: no new place, and the newest now.
@@ -178,12 +183,28 @@ export function createSecretRegistry(): SecretRegistry {
       values.set(secret, known)
       return
     }
-    const forms = secretSpellings(secret).filter((one) => one.length >= MIN_SECRET_LENGTH)
+    // A spelling longer than a string redaction looks at cannot be found in one.
+    const forms = secretSpellings(secret).filter(
+      (one) => one.length >= MIN_SECRET_LENGTH && one.length <= REDACT_INPUT_LIMIT,
+    )
     values.set(secret, forms)
     for (const form of forms) spellings.add(form)
     written.add(secret)
     longestValue = Math.max(longestValue, secret.length)
     if (values.size > MAX_SECRETS) forgetStalest()
+  }
+
+  /** Where the end of `body` begins when it is the start of a registered value as written, else -1. */
+  const tailStart = (body: string): number => {
+    // A tail shorter than the longest value, so it can be the start of that one.
+    for (
+      let at = Math.max(0, body.length - longestValue + 1);
+      at + MIN_SECRET_LENGTH <= body.length;
+      at += 1
+    ) {
+      if (written.startsAt(body, at)) return at
+    }
+    return -1
   }
 
   const replace = (text: string): string => {
@@ -198,6 +219,21 @@ export function createSecretRegistry(): SecretRegistry {
       if (last > 0 && at < (spans[last] ?? 0)) spans[last] = Math.max(spans[last] ?? 0, end)
       else spans.push(at, end)
     }
+    // What an upstream cut left at the end, with the cut mark that may follow it left alone.
+    const mark = CUT_MARK.exec(text)?.[0] ?? ''
+    const bodyEnd = text.length - mark.length
+    const tailAt = tailStart(mark === '' ? text : text.slice(0, bodyEnd))
+    if (tailAt >= 0) {
+      // The pairs the tail reaches into or covers become part of it.
+      let from = tailAt
+      let to = bodyEnd
+      while (spans.length > 0 && (spans[spans.length - 1] ?? 0) > from) {
+        from = Math.min(from, spans[spans.length - 2] ?? from)
+        to = Math.max(to, spans[spans.length - 1] ?? to)
+        spans.length -= 2
+      }
+      spans.push(from, to)
+    }
     if (spans.length === 0) return text
     let result = ''
     let copied = 0
@@ -208,20 +244,5 @@ export function createSecretRegistry(): SecretRegistry {
     return result + text.slice(copied)
   }
 
-  const cutTail = (text: string): string => {
-    if (values.size === 0) return text
-    const mark = CUT_MARK.exec(text)?.[0] ?? ''
-    const body = mark === '' ? text : text.slice(0, text.length - mark.length)
-    // A tail shorter than the longest value, so it can be the start of that one.
-    for (
-      let at = Math.max(0, body.length - longestValue + 1);
-      at + MIN_SECRET_LENGTH <= body.length;
-      at += 1
-    ) {
-      if (written.startsAt(body, at)) return `${body.slice(0, at)}${REDACTED}${mark}`
-    }
-    return text
-  }
-
-  return { add, replace, cutTail }
+  return { add, replace }
 }

@@ -19,10 +19,37 @@ const SUMMARY_FRAMES = 10
 const FRAME_LIMIT = 300
 const MESSAGE_LIMIT = 500
 
+/** The longest an error code is kept: as long as any string field of a line. */
+const CODE_LIMIT = 2000
+
 /** What a summary says of a thrown value that is not an error: log words, not copy for the user. */
 const NON_ERROR = 'NonError'
-const UNREADABLE = '(the error could not be read)'
+/** What the log says of an error it could not read anything from. */
+export const UNREADABLE = '(the error could not be read)'
 const FUNCTION_THROWN = '[function]'
+
+/**
+ * The most characters of one string that taking secrets out of it looks at (spec §怎么写「脱敏的
+ * 工作量有上界」): what is past it was going to be cut off anyway, and a longer value is not
+ * registered. What a lookup costs is the length of the string times the length of the longest
+ * value; this keeps both within a few tens of milliseconds.
+ */
+export const REDACT_INPUT_LIMIT = 16_384
+
+/** A string cut to `REDACT_INPUT_LIMIT`, and how many characters of it were left out. */
+export interface BoundedText {
+  readonly text: string
+  readonly omitted: number
+}
+
+/** `text` as far as redaction looks at it; a pair of UTF-16 halves is never split. */
+export function boundInput(text: string): BoundedText {
+  if (text.length <= REDACT_INPUT_LIMIT) return { text, omitted: 0 }
+  let cut = REDACT_INPUT_LIMIT
+  const last = text.charCodeAt(cut - 1)
+  if (last >= 0xd800 && last <= 0xdbff) cut -= 1
+  return { text: text.slice(0, cut), omitted: text.length - cut }
+}
 
 /**
  * The ways one registered value may be written: as it is, in base64 (padded, unpadded and URL-safe),
@@ -48,13 +75,28 @@ export function secretSpellings(secret: string): string[] {
 /**
  * `text` cut to `limit` characters, with a mark that says how many were left out: `…(+5120)`. The
  * mark is added after the limit and does not count in it. A pair of UTF-16 halves is never split.
+ * `omitted` is what was left off the end of `text` before it got here: it is in the mark too, and
+ * a text that fits still gets the mark when something was left off it.
  */
-export function truncateText(text: string, limit: number): string {
-  if (text.length <= limit) return text
-  let cut = Math.max(0, limit)
+export function truncateText(text: string, limit: number, omitted = 0): string {
+  if (text.length <= limit && omitted === 0) return text
+  let cut = Math.min(Math.max(0, limit), text.length)
   const last = text.charCodeAt(cut - 1)
   if (cut > 0 && last >= 0xd800 && last <= 0xdbff) cut -= 1
-  return `${text.slice(0, cut)}…(+${text.length - cut})`
+  return `${text.slice(0, cut)}…(+${text.length - cut + omitted})`
+}
+
+/**
+ * `text` taken out by `redact`, then cut to `limit`: of a text longer than `REDACT_INPUT_LIMIT`
+ * `redact` is given the first part only, and the mark counts the whole.
+ */
+export function redactAndCut(
+  text: string,
+  limit: number,
+  redact: (text: string) => string,
+): string {
+  const bounded = boundInput(text)
+  return truncateText(redact(bounded.text), limit, bounded.omitted)
 }
 
 /**
@@ -105,7 +147,7 @@ export function summarizeError(error: unknown, redact: (text: string) => string)
 function summarize(error: unknown, redact: (text: string) => string): ErrorSummary {
   if (typeof error === 'function') return { name: NON_ERROR, message: FUNCTION_THROWN }
   if (typeof error !== 'object' || error === null) {
-    return { name: NON_ERROR, message: truncateText(redact(String(error)), MESSAGE_LIMIT) }
+    return { name: NON_ERROR, message: redactAndCut(String(error), MESSAGE_LIMIT, redact) }
   }
   const record = error as { message?: unknown; code?: unknown; stack?: unknown; name?: unknown }
   const constructorName = (error as { constructor?: { name?: unknown } }).constructor?.name
@@ -124,12 +166,12 @@ function summarize(error: unknown, redact: (text: string) => string): ErrorSumma
           .split('\n')
           .filter((line) => /^\s*at\s/u.test(line))
           .slice(0, SUMMARY_FRAMES)
-          .map((line) => truncateText(redact(line.trim()), FRAME_LIMIT))
+          .map((line) => redactAndCut(line.trim(), FRAME_LIMIT, redact))
       : []
   return {
-    name: truncateText(redact(name), 200),
-    ...(code === null ? {} : { code: redact(code) }),
-    message: truncateText(redact(message), MESSAGE_LIMIT),
+    name: redactAndCut(name, 200, redact),
+    ...(code === null ? {} : { code: redactAndCut(code, CODE_LIMIT, redact) }),
+    message: redactAndCut(message, MESSAGE_LIMIT, redact),
     ...(frames.length === 0 ? {} : { frames }),
   }
 }

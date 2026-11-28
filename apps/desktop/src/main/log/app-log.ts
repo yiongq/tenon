@@ -27,7 +27,7 @@ import { join } from 'node:path'
 import { joinPath } from '@tenon-app/kernel'
 import type { AbsolutePath } from '@tenon-app/kernel'
 import type { LogEvent, LogLevel } from './events.js'
-import { redactGeneric, truncateText } from './redact.js'
+import { UNREADABLE, boundInput, redactAndCut, redactGeneric, truncateText } from './redact.js'
 import { createSecretRegistry } from './registry.js'
 
 /** The folder of the app log inside a profile (the profile is `profileDirFor(userData, …)`). */
@@ -61,8 +61,16 @@ export interface AppLog {
   write(level: LogLevel, event: LogEvent): void
   /** For a module's existing `log: (line: string) => void`. */
   line(source: string, level: LogLevel): (text: string) => void
-  /** Registers a secret (not under 8 characters) so that it is taken out of every line. */
+  /**
+   * Registers a secret (not under 8 characters, not over 16 384) so that it is taken out of every
+   * line.
+   */
   remember(secret: string): void
+  /**
+   * `text` with the secrets, the folders and the common token formats taken out. Only the first
+   * 16 384 characters are looked at: of a longer text the rest is left out and `…(+N)` says how
+   * much.
+   */
   redact(text: string): string
   /** The folder, once the log is open; null before that. */
   readonly dir: AbsolutePath | null
@@ -167,17 +175,22 @@ function weightOf(event: LogEvent): number {
   return 1
 }
 
-/** A string field that can be cut shorter while a line is made to fit. */
+/**
+ * A string field that can be cut shorter while a line is made to fit. `original` is the text as
+ * far as redaction looked at it, and `omitted` the characters of the field it did not look at.
+ */
 class Field {
   readonly original: string
+  readonly omitted: number
   keep = FIELD_LIMIT
 
-  constructor(original: string) {
+  constructor(original: string, omitted: number) {
     this.original = original
+    this.omitted = omitted
   }
 
   rendered(): string {
-    return truncateText(this.original, this.keep)
+    return truncateText(this.original, this.keep, this.omitted)
   }
 
   /** Characters of the original that are in the line now. */
@@ -297,15 +310,24 @@ export function createAppLog(options: AppLogOptions): AppLog {
     registry.add(secret)
   }
 
-  /** One string: the registered values, what an upstream cut left of one, the common formats, the folders. */
-  const redact = (text: string): string => {
+  /**
+   * One string that is within what redaction looks at: the registered values, what an upstream
+   * cut left of one, the common formats, the folders.
+   */
+  const redactWithin = (text: string): string => {
     let result = registry.replace(text)
-    result = registry.cutTail(result)
     result = redactGeneric(result)
     // The application folder first: a development build's lies inside the home.
     if (appDirPattern !== null) result = result.replace(appDirPattern, '<app>')
     if (homePattern !== null) result = result.replace(homePattern, '~')
     return result
+  }
+
+  /** Any string: what is past the first 16 384 characters is not looked at; the mark says how much. */
+  const redact = (text: string): string => {
+    const bounded = boundInput(text)
+    const result = redactWithin(bounded.text)
+    return bounded.omitted === 0 ? result : `${result}…(+${bounded.omitted})`
   }
 
   // ---- state -----------------------------------------------------------------------------------
@@ -327,7 +349,9 @@ export function createAppLog(options: AppLogOptions): AppLog {
   let run: RendererRun | null = null
   /**
    * Lines given up because the file was full and could not turn over, or the new one could not be
-   * opened (a counted line is one line, whatever it stood for); written once it has.
+   * opened, written as a `log.dropped` once it has. An event counts for `weightOf` lines: the
+   * lines a `log.dropped` stood for, the repeats a run of one interface error adds to its first
+   * line, one for any other.
    */
   let rotateDropped = 0
   /** No new try to turn the file over, or to open the new one, before this instant (ms since the epoch). */
@@ -347,20 +371,26 @@ export function createAppLog(options: AppLogOptions): AppLog {
     }
   }
 
+  /** What a thrown value says for the one word to stderr; a value that cannot be read says so. */
   const reason = (error: unknown): string => {
-    const code = codeOf(error)
-    const message = error instanceof Error ? error.message : String(error)
-    return code !== null && !message.startsWith(code) ? `${code}: ${message}` : message
+    try {
+      const code = codeOf(error)
+      const message = error instanceof Error ? error.message : String(error)
+      return code !== null && !message.startsWith(code) ? `${code}: ${message}` : message
+    } catch {
+      return UNREADABLE
+    }
   }
 
   /** The version as every line and the marker carry it: taken out first, then cut to 200. */
-  const versionText = (): string => truncateText(redact(version), 200)
+  const versionText = (): string => redactAndCut(version, 200, redactWithin)
 
   // ---- one line --------------------------------------------------------------------------------
   /** The tree of a value with every string held as a cuttable field, or undefined for what is not data. */
   const treeOf = (value: unknown, fields: Field[], depth: number): Tree | undefined => {
     if (typeof value === 'string') {
-      const field = new Field(redact(value))
+      const bounded = boundInput(value)
+      const field = new Field(redactWithin(bounded.text), bounded.omitted)
       fields.push(field)
       return field
     }
@@ -544,7 +574,16 @@ export function createAppLog(options: AppLogOptions): AppLog {
       return false
     }
     // The full file is out of the way: what opens under its name is a new one.
-    closeSync(fd)
+    try {
+      closeSync(fd)
+    } catch (error) {
+      // The rename is done and the descriptor is of no more use to write to, closed or not: a
+      // failed turn-over like the others, and nothing is renamed over what was just put away.
+      fd = -1
+      rotateRetryAt = time.getTime() + WINDOW_MS
+      report(reason(error))
+      return false
+    }
     fd = -1
     return beginFile(dir, time)
   }

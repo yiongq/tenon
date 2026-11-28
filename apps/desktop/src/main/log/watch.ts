@@ -5,7 +5,7 @@
  */
 import type { IpcError, IpcMainLike } from '@tenon-app/contracts'
 import type { AppLog } from './app-log.js'
-import { truncateText } from './redact.js'
+import { redactAndCut } from './redact.js'
 
 const RENDERER_MESSAGE_LIMIT = 300
 const RENDERER_SOURCE_LIMIT = 200
@@ -65,9 +65,10 @@ function fileNameOf(sourceId: string): string {
 }
 
 /**
- * Logs the page's errors: only those of level `error`, their first line (redacted, then cut to 300),
- * the file's name and the line number. A run of the same error is one line and a count; that is
- * `AppLog`'s to merge (`renderer.error`).
+ * Logs the page's errors: only those of level `error`, their first line (redacted, then cut to 300;
+ * of a line longer than 16 384 characters only the start is looked at, and the count of what was
+ * cut is still of the whole line), the file's name and the line number. A run of the same error is
+ * one line and a count; that is `AppLog`'s to merge (`renderer.error`).
  */
 export function watchRendererConsole(
   contents: {
@@ -88,8 +89,8 @@ export function watchRendererConsole(
     const first = String(details.message).split(/\r?\n/u, 1)[0] ?? ''
     log.write('error', {
       event: 'renderer.error',
-      message: truncateText(log.redact(first), RENDERER_MESSAGE_LIMIT),
-      source: truncateText(log.redact(fileNameOf(String(details.sourceId))), RENDERER_SOURCE_LIMIT),
+      message: redactAndCut(first, RENDERER_MESSAGE_LIMIT, log.redact),
+      source: redactAndCut(fileNameOf(String(details.sourceId)), RENDERER_SOURCE_LIMIT, log.redact),
       line: Number.isInteger(details.lineNumber) ? details.lineNumber : 0,
       repeats: 1,
     })
