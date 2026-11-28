@@ -58,6 +58,8 @@ function deps(platform: NodeJS.Platform = 'darwin'): SandboxPostureDeps {
   }
 }
 
+const seamEnv = (mode: string) => snapshotEnv({ TENON_DEV_ENV: 'off', TENON_TEST_SANDBOX: mode })
+
 describe('04 sandbox e2e seam', () => {
   it.each([
     {
@@ -124,6 +126,18 @@ describe('04 sandbox e2e seam', () => {
     expect(outcome.state).toBe('active')
     expect(outcome.reasons).toEqual([{ code: 'test-seam', detail: 'fake' }])
     expect(ports.log).toHaveBeenCalledExactlyOnceWith('sandbox: active (test-seam: fake)')
+  })
+
+  it('error-logs 验收 1: the line that says the sandbox is active is information; one that says it is not stays a warning', async () => {
+    const active = { ...deps(), info: vi.fn<NonNullable<SandboxPostureDeps['info']>>() }
+    await startDesktopSandboxPosture(active, false, seamEnv('fake')).outcome
+    expect(active.info).toHaveBeenCalledExactlyOnceWith('sandbox: active (test-seam: fake)')
+    expect(active.log).not.toHaveBeenCalled()
+
+    const off = { ...deps(), info: vi.fn<NonNullable<SandboxPostureDeps['info']>>() }
+    await startDesktopSandboxPosture(off, false, seamEnv('off')).outcome
+    expect(off.log).toHaveBeenCalledExactlyOnceWith('sandbox: unavailable (test-seam: off)')
+    expect(off.info).not.toHaveBeenCalled()
   })
 
   it.each([

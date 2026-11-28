@@ -54,7 +54,7 @@ export function createMcpLogSink(identity: HostIdentity) {
       const path = file(id)
       const run = (pending.get(id) ?? tightened)
         .then(async () => {
-          await mkdir(logs, { recursive: true })
+          await mkdir(logs, { recursive: true, mode: 0o700 })
           const size = await stat(path).then(
             (s) => s.size,
             () => 0,

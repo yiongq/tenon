@@ -36,7 +36,6 @@ import { createProbeRuns, registerCustomVendorRoutes } from './custom-vendors/ro
 import { registerConfigRoutes } from './config.js'
 import { loadDevEnv } from './dev-env.js'
 import { createDesktopHost } from './host/index.js'
-import { helperPaths } from './host/sandbox-config.js'
 import { startSandboxAfterWindow } from './host/sandbox-runtime.js'
 import { pickShell, snapshotEnv, startCommandShell } from './host/shell-env.js'
 import { readConfig } from './host/profile.js'
@@ -197,6 +196,8 @@ async function main(): Promise<void> {
     tenantId: LOCAL_TENANT_ID,
     send: broadcast,
     log: appLog.line('host', 'warn'),
+    // `sandbox: active …` is the sandbox as it should be: information, same source (error-logs §记什么).
+    info: appLog.line('host', 'info'),
     unattributedLog: appLog.line('sandbox-unattributed', 'warn'),
     isPackaged: app.isPackaged,
     startupEnv,
@@ -501,8 +502,9 @@ async function main(): Promise<void> {
         one.detail === null ? one.code : `${one.code}: ${one.detail}`,
       ),
     })
-    appLog.write('info', { event: 'sandbox.helpers', ...helperPaths() })
+    // The notice goes out whatever the line after it does; the paths are the ones handed to the sandbox.
     sandboxRoutes.changed()
+    appLog.write('info', { event: 'sandbox.helpers', ...host.sandbox.helpers })
   })
   win.webContents.on('did-finish-load', () => {
     win.webContents.send(configLocale.channel, { locale: locale.current })

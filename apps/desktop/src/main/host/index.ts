@@ -29,6 +29,8 @@ export interface DesktopHostOptions {
    * is the one line the sandboxed program can make as often as it likes. Falls back to `log`.
    */
   unattributedLog?: (line: string) => void
+  /** Where the sandbox's line that says it is active goes: information, not a warning. Falls back to `log`. */
+  info?: (line: string) => void
   /** `app.isPackaged`, passed in rather than read so this module stays free of electron. */
   isPackaged: boolean
   /**
@@ -68,6 +70,7 @@ export async function createDesktopHost(options: DesktopHostOptions): Promise<
     startupEnv: options.startupEnv,
     log: options.log,
     ...(options.unattributedLog === undefined ? {} : { unattributedLog: options.unattributedLog }),
+    ...(options.info === undefined ? {} : { info: options.info }),
   })
   const clock = new SystemClock()
   const snapshots = new DesktopSnapshots({ identity, clock, process: hostProcess, sandbox })
